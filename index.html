@@ -13812,7 +13812,22 @@ function testSheet(tid) {
 /* QR-Format 2: Plan -> JSON -> LZ-komprimiert (Bytes) -> Base44 (nur QR-Alphanumerik-Zeichen, ohne Leerzeichen).
    Alphanumerik-Modus + Fehlerkorrektur L + max. ~440 Zeichen je Code = höchstens Version 11 (61 × 61 Module):
    grob genug für jede Handykamera, auch ausgedruckt. Das alte Format (AVGLT1) wird weiterhin gelesen. */
+/* Format 3 (Standard): wie Format 2, aber mit Deflate statt LZ komprimiert (ca. 40 % weniger Zeichen → weniger Codes).
+   Braucht CompressionStream (Chrome/Android ab 80, Safari/iOS ab 16.4); sonst automatisch Format 2. */
 const QR_PREFIX = 'AVG2';
+const HAS_DEFLATE = typeof CompressionStream === 'function' && typeof DecompressionStream === 'function';
+async function deflate(str) {
+  const s = new Blob([new TextEncoder().encode(str)]).stream().pipeThrough(new CompressionStream('deflate-raw'));
+  return new Uint8Array(await new Response(s).arrayBuffer());
+}
+async function inflate(bytes, maxBytes = 300000) {
+  const reader = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+  const chunks = []; let total = 0;
+  for (;;) { const { done, value } = await reader.read(); if (done) break; total += value.length;
+    if (total > maxBytes) { reader.cancel(); throw new Error('Daten zu groß'); } chunks.push(value); }
+  const out = new Uint8Array(total); let o = 0; chunks.forEach(c => { out.set(c, o); o += c.length; });
+  return new TextDecoder().decode(out);
+}
 const QR_MAX = 440;
 const B44 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ$%*+-./:';
 function b44enc(bytes) {
@@ -13833,17 +13848,20 @@ function b44dec(str) {
   return new Uint8Array(out);
 }
 function trimArr(a) { a = a.slice(); while (a.length && (a[a.length - 1] === '' || a[a.length - 1] == null)) a.pop(); return a; }
-function encodePlans(plans) {
+async function encodePlans(plans) {
   const usedCustom = new Set(); plans.forEach(p => p.days.forEach(d => d.i.forEach(i => { if (!EXMAP[i.ex]) usedCustom.add(i.ex); })));
   const payload = { k: 'plans',
     x: [...usedCustom].map(id => { const e = ex(id); return trimArr([id, e.n, e.cat, e.eq || '', e.d || '', (e.c || []).join('\n')]); }),
     p: plans.map(p => [p.name, p.sport || '', p.weeks || 0, p.dl || 0, p.notes || '', p.days.map(d => [d.n, d.i.map(i => trimArr([i.ex, i.sets, i.reps, i.rest, i.load || '', i.note || '']))])]) };
-  return b44enc(LZString.compressToUint8Array(JSON.stringify(payload)));
+  const json = JSON.stringify(payload);
+  if (HAS_DEFLATE) { try { return { ver: 'AVG3', data: b44enc(await deflate(json)) }; } catch (e) { /* Fallback */ } }
+  return { ver: 'AVG2', data: b44enc(LZString.compressToUint8Array(json)) };
 }
-function chunksFor(data) {
+function chunksFor(enc) {
+  const data = enc.data, ver = enc.ver;
   const n = Math.max(1, Math.ceil(data.length / QR_MAX)); const size = Math.ceil(data.length / n);
   const gid = Array.from({ length: 4 }, () => '0123456789ABCDEFGHJKLMNPQRSTUVWXYZ'[Math.floor(Math.random() * 34)]).join('');
-  return Array.from({ length: n }, (_, i) => `${QR_PREFIX}:${i + 1}/${n}:${gid}:${data.slice(i * size, (i + 1) * size)}`);
+  return Array.from({ length: n }, (_, i) => `${ver}:${i + 1}/${n}:${gid}:${data.slice(i * size, (i + 1) * size)}`);
 }
 function qrSvg(text) {
   const alnum = /^[0-9A-Z $%*+\-./:]*$/.test(text);
@@ -13853,12 +13871,14 @@ function qrSvg(text) {
 let shareCycle = null;
 function stopShareCycle() { clearInterval(shareCycle); shareCycle = null; }
 function appUrl() { return location.href.split('#')[0]; }
-function viewShare(id) {
+async function viewShare(id) {
   const plans = id === 'all' ? S.plans : S.plans.filter(p => p.id === id);
   if (!plans.length) return go('#plans');
   setTitle('Per QR teilen', true);
-  const data = encodePlans(plans); const parts = chunksFor(data); let cur = 0;
-  const link = appUrl() + '#import=' + encodeURIComponent(`${QR_PREFIX}:1/1:link:${data}`);
+  const token = location.hash; V('<p class="muted" style="text-align:center;margin-top:30px">QR-Codes werden erzeugt …</p>');
+  const enc = await encodePlans(plans); if (location.hash !== token) return;
+  const data = enc.data; const parts = chunksFor(enc); let cur = 0;
+  const link = appUrl() + '#import=' + encodeURIComponent(`${enc.ver}:1/1:LINK:${data}`);
   const v = V(`
     <p class="small muted">${plans.length === 1 ? `„${esc(plans[0].name)}“` : plans.length + ' Pläne'} – Schüler öffnen die App, tippen oben rechts auf <b>▣</b> und scannen den Code.</p>
     <div class="qr-box" id="qr"></div>
@@ -13883,7 +13903,7 @@ function viewShare(id) {
     if (navigator.share) { try { await navigator.share({ title: 'Trainingsplan', text: plans.map(p => p.name).join(', '), url: link }); } catch (e) { /* abgebrochen */ } }
     else copyText(link, 'Link kopiert');
   };
-  $('#cpCode', v).onclick = () => copyText(`${QR_PREFIX}:1/1:text:${data}`, 'Code kopiert – kann im Scanner eingefügt werden');
+  $('#cpCode', v).onclick = () => copyText(`${enc.ver}:1/1:TEXT:${data}`, 'Code kopiert – kann im Scanner eingefügt werden');
   $('#print', v).onclick = () => {
     const w = window.open('', '_blank'); if (!w) return toast('Pop-up blockiert');
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>QR – ${esc(plans.map(p => p.name).join(', '))}</title>
@@ -13921,7 +13941,7 @@ function viewScan() {
     <div class="btns"><label class="btn" for="imgIn">🖼 Foto wählen</label></div>
     <input type="file" id="imgIn" accept="image/*" hidden>
     <details class="card small"><summary><b>Code von Hand einfügen</b></summary>
-      <textarea id="codeIn" placeholder="AVG2:…" style="margin-top:8px"></textarea><button class="btn btn-sm btn-dark" id="codeGo" style="margin-top:6px">Importieren</button></details>
+      <textarea id="codeIn" placeholder="AVG3:…" style="margin-top:8px"></textarea><button class="btn btn-sm btn-dark" id="codeGo" style="margin-top:6px">Importieren</button></details>
   `);
   const status = $('#scanStatus', v);
   let helpT = setTimeout(() => { const h = $('#scanHelp', v); if (h) h.hidden = false; }, 15000);
@@ -13974,7 +13994,7 @@ function viewScan() {
 }
 /* liefert true, wenn fertig */
 function onScanned(txt, status) {
-  const m = /^(AVGLT1|AVG2):(\d+)\/(\d+):([A-Za-z0-9]+):(.*)$/s.exec(txt.trim());
+  const m = /^(AVGLT1|AVG2|AVG3):(\d+)\/(\d+):([A-Za-z0-9]+):(.*)$/s.exec(txt.trim());
   if (!m) { status.textContent = 'Das ist kein Trainingsplan-Code der AVG-App.'; return false; }
   const ver = m[1], i = +m[2], n = +m[3], gid = m[4];
   if (n < 1 || n > 60 || i < 1 || i > n) return false;
@@ -13991,9 +14011,10 @@ function onScanned(txt, status) {
   handleCode(`${ver}:1/1:X:${data}`);
   return true;
 }
-function decodePayload(code) {
-  const m = /^(AVGLT1|AVG2):1\/1:[A-Za-z0-9]+:(.*)$/s.exec(code.trim()); if (!m) throw new Error('Format');
-  const json = m[1] === 'AVG2' ? LZString.decompressFromUint8Array(b44dec(m[2])) : LZString.decompressFromEncodedURIComponent(m[2]);
+async function decodePayload(code) {
+  const m = /^(AVGLT1|AVG2|AVG3):1\/1:[A-Za-z0-9]+:(.*)$/s.exec(code.trim()); if (!m) throw new Error('Format');
+  if (m[1] === 'AVG3' && !HAS_DEFLATE) throw new Error('Browser zu alt – bitte Handy/Browser aktualisieren (iPhone: ab iOS 16.4)');
+  const json = m[1] === 'AVG3' ? await inflate(b44dec(m[2])) : m[1] === 'AVG2' ? LZString.decompressFromUint8Array(b44dec(m[2])) : LZString.decompressFromEncodedURIComponent(m[2]);
   if (!json) throw new Error('Daten beschädigt');
   const o = JSON.parse(json); if (!o || o.k !== 'plans' || !Array.isArray(o.p)) throw new Error('Unbekannter Inhalt');
   const str = (v, max) => String(v == null ? '' : v).slice(0, max);
@@ -14004,8 +14025,8 @@ function decodePayload(code) {
       ex: str(i[0], 40), sets: int(i[1], 1, 20), reps: str(i[2], 24), rest: int(i[3], 0, 600), load: str(i[4], 30), note: str(i[5], 80) })) })) }));
   return { plans, xs };
 }
-function handleCode(code) {
-  let res; try { res = decodePayload(code); } catch (e) { toast('Code konnte nicht gelesen werden (' + e.message + ').'); return; }
+async function handleCode(code) {
+  let res; try { res = await decodePayload(code); } catch (e) { toast('Code konnte nicht gelesen werden (' + e.message + ').'); return; }
   const { plans, xs } = res;
   openModal(`<h3>Trainingsplan empfangen 📥</h3>
     ${plans.map(p => `<div class="card"><div class="row"><b class="grow">${esc(p.name)}</b>${sportBadge(p.sport)}</div>
