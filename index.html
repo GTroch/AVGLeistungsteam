@@ -247,6 +247,12 @@ details.wb { margin-top: 12px; } details.wb summary { cursor: pointer; }
 .sets .h { font-size: .66rem; letter-spacing: .02em; }
 .cp-row select { width: 150px; }
 
+/* Paket 4: Timer */
+.tm-card { border: 3px solid var(--line); border-radius: 20px; padding: 18px 16px; margin: 12px 0; text-align: center; background: var(--card); }
+.tm-phase { font-weight: 800; text-transform: uppercase; letter-spacing: .08em; font-size: .9rem; }
+.tm-ex { margin: 6px 0 4px; font-size: 1.4rem; }
+.tm-time { font-size: 5rem; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; margin: 8px 0; }
+
 </style>
 </head>
 <body>
@@ -13092,7 +13098,8 @@ const SAFETY_TIPS = [
 /* ================= Logo, Manifest & Installation ================= */
 const LOGO = window.AVG_LOGO || 'img/logo.png';
 const IS_WEB = /^https?:$/.test(location.protocol);
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
+let run = null, runInt = null, wakeLock = null;   // Timer-Zustand (Paket 4)
 let updateInfo = null;   // { version }, wenn auf der Webseite eine neuere Version liegt
 (function setupManifest() {
   if (!IS_WEB || document.querySelector('link[rel="manifest"]')) return;
@@ -13175,7 +13182,7 @@ const CHEV = '<svg class="chev" viewBox="0 0 24 24" width="20" height="20"><path
 const KEY = 'avg-leistungsteam-v1';
 function blank() {
   return { v: 1, profile: { name: '', sport: '', level: 'einsteiger', onboarded: false },
-    plans: [], customEx: [], log: [], tests: [], complaints: [], types: [], events: [], kader: [], lastBackup: null, activePlan: null, wip: null, tip: 0 };
+    plans: [], customEx: [], log: [], tests: [], complaints: [], types: [], events: [], kader: [], goals: [], dream: '', lastBackup: null, activePlan: null, wip: null, tip: 0 };
 }
 let S = (() => {
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v === 1) return Object.assign(blank(), s); } catch (e) { /* leer */ }
@@ -13233,11 +13240,11 @@ function go(h) { if (location.hash === h) route(); else location.hash = h; }
 const ROUTES = {
   home: viewHome, plans: viewPlans, plan: viewPlan, edit: viewEdit, templates: viewTemplates,
   lib: viewLib, ex: viewEx, log: viewLog, tests: viewTests, more: viewMore,
-  scan: viewScan, share: viewShare, workout: viewWorkout, onboard: viewOnboard, safety: viewSafety, profile: viewProfile, beschwerden: viewComplaints, wettkaempfe: viewEvents, arten: viewTypes, bericht: viewReport, kader: viewKader, athlet: viewAthlete
+  scan: viewScan, share: viewShare, workout: viewWorkout, onboard: viewOnboard, safety: viewSafety, profile: viewProfile, beschwerden: viewComplaints, wettkaempfe: viewEvents, arten: viewTypes, bericht: viewReport, kader: viewKader, athlet: viewAthlete, ziele: viewGoals, timer: viewTimer
 };
 let pendingImport = null;
 function route() {
-  closeModal(); stopShareCycle();
+  closeModal(); stopShareCycle(); if (!/^#timer/.test(location.hash)) stopTimerRun();
   const h = location.hash || '#home';
   if (h.startsWith('#import=')) { const code = decodeURIComponent(h.slice(8)); history.replaceState(null, '', '#home'); route(); if (S.profile.onboarded) handleCode(code); else pendingImport = code; return; }
   const m = /^#([a-z]+)(?:-(.*))?$/.exec(h) || [];
@@ -13250,7 +13257,7 @@ function route() {
   fn(arg);
   window.scrollTo(0, 0);
 }
-function tabOf(n) { return { plan: 'plans', edit: 'plans', templates: 'plans', share: 'plans', ex: 'lib', tests: 'more', safety: 'more', profile: 'more', beschwerden: 'log', wettkaempfe: 'log', arten: 'log', bericht: 'log', kader: 'more', athlet: 'more' }[n] || n; }
+function tabOf(n) { return { plan: 'plans', edit: 'plans', templates: 'plans', share: 'plans', ex: 'lib', tests: 'more', safety: 'more', profile: 'more', beschwerden: 'log', wettkaempfe: 'log', arten: 'log', bericht: 'log', kader: 'more', athlet: 'more', ziele: 'home', timer: 'plans' }[n] || n; }
 window.addEventListener('hashchange', route);
 
 function V(html) { $('#view').innerHTML = html; return $('#view'); }
@@ -13485,6 +13492,7 @@ function viewHome() {
     </div>
     ${backupDue() ? `<div class="card row" style="margin-top:14px"><div class="grow"><b>💾 Zeit für eine Datensicherung</b><div class="small muted">${S.lastBackup ? 'Letzte Sicherung am ' + fmtDate(S.lastBackup) : 'Noch keine Sicherung'} – schützt dein Tagebuch beim Handywechsel.</div></div><button class="btn btn-dark btn-sm" id="homeBak">Sichern</button></div>` : ''}
     ${isStandalone() ? '' : `<div class="card row" data-install style="margin-top:14px"><div class="grow"><b>📲 Als App installieren</b><div class="small muted">Vollbild, Start vom Homescreen, auch offline.</div></div><button class="btn btn-primary btn-sm" id="homeInst">Installieren</button></div>`}
+    ${activeGoals().length ? goalCard(activeGoals()[0], true) : `<a class="item" href="#ziele"><div class="grow"><div class="t">🎯 Setz dir ein Ziel</div><div class="s">Mit Countdown und Fortschritt aus dem Athletik-Check</div></div>${CHEV}</a>`}
     <div class="card tip small" style="margin-top:14px"><b>Tipp:</b> ${esc(tip)}</div>
     ${S.log.length ? `<h2>Zuletzt</h2>${S.log.slice(0, 3).map(logItem).join('')}` : ''}
   `);
@@ -13541,7 +13549,7 @@ function viewPlan(id) {
       <a class="btn" href="#share-${p.id}">▣ Per QR teilen</a>
     </div>
     ${p.days.map((d, di) => `<div class="card day">
-      <div class="day-h"><h3 class="grow">${esc(d.n)}</h3><button class="btn btn-sm btn-primary" data-start="${di}">▶ Start</button></div>
+      <div class="day-h"><h3 class="grow">${esc(d.n)}</h3><button class="btn btn-sm" data-timer-start="${di}">⏱ Timer</button><button class="btn btn-sm btn-primary" data-start="${di}">▶ Start</button></div>
       ${d.i.map((it, k) => `<div class="ex-row"><span class="num">${k + 1}</span><div class="grow">
         <a href="#ex-${rid(it.ex)}" style="text-decoration:none"><b>${esc(ex(it.ex).n)}</b></a>
         <div class="small muted">${esc(it.sets)} × ${esc(it.reps)}${it.rest ? ' · Pause ' + esc(it.rest) + ' s' : ''}${it.load ? ' · ' + esc(it.load) : ''}</div>
@@ -13550,6 +13558,7 @@ function viewPlan(id) {
     <div class="btns"><a class="btn" href="#edit-${p.id}">✎ Bearbeiten</a><button class="btn" id="dup">Duplizieren</button><button class="btn btn-danger" id="del">Löschen</button></div>
   `);
   $$('[data-start]', v).forEach(b => b.onclick = () => startWorkout(p.id, +b.dataset.start));
+  $$('[data-timer-start]', v).forEach(b => b.onclick = () => timerSetup(p.id, +b.dataset.timerStart));
   if ($('#act', v)) $('#act', v).onclick = () => { S.activePlan = { id: p.id, start: today() }; save(); toast('Aktiver Plan gesetzt – Woche 1 beginnt heute'); route(); };
   if ($('#deact', v)) $('#deact', v).onclick = () => { S.activePlan = null; save(); route(); };
   $('#dup', v).onclick = () => { const c = clone(p); c.id = uid(); c.name += ' (Kopie)'; c.src = ''; S.plans.unshift(c); save(); go('#plan-' + c.id); };
@@ -13776,6 +13785,7 @@ function viewWorkout() {
   const done = w.items.reduce((a, i) => a + i.sets.filter(s => s.done).length, 0), total = w.items.reduce((a, i) => a + i.sets.length, 0);
   const v = V(`
     <div class="row" style="margin-top:4px"><div class="grow"><div class="progress"><i style="width:${total ? done / total * 100 : 0}%"></i></div></div><span class="small"><b>${done}/${total}</b> Sätze</span></div>
+    ${S.plans.some(x => x.id === w.planId) && done < total ? '<button class="btn btn-block" id="toTimer" style="margin-top:8px">⏱ Mit Timer durchlaufen (Ansage & Signaltöne)</button>' : ''}
     ${w.deload ? '<div class="card tip small"><b>Deload-Woche:</b> Sätze sind halbiert. Bleib bei moderater Intensität – Erholung macht stark.</div>' : ''}
     ${w.items.map((it, i) => { const e = ex(it.ex); const t = it.target; const last = exerciseHistory(it.ex)[0]; const allDone = it.sets.every(s => s.done); const m = exMeasure(e, t);
       return `<div class="wo-card ${allDone ? 'done' : ''}" id="wc${i}">
@@ -13815,6 +13825,7 @@ function viewWorkout() {
   $('#addEx', v).onclick = () => pickExercise(e => { w.items.push({ ex: e.id, target: { sets: e.def ? e.def[0] : 3, reps: e.def ? e.def[1] : '10', rest: e.def ? e.def[2] : 60, load: '', note: 'ergänzt' }, sets: Array.from({ length: e.def ? e.def[0] : 3 }, () => ({ r: '', kg: '', done: false })) }); save(); route(); });
   $('#abort', v).onclick = async () => { if (!await confirmBox('Training abbrechen? Nichts wird gespeichert.', 'Abbrechen', true)) return; S.wip = null; save(); stopRest(); go('#home'); };
   $('#finish', v).onclick = finishWorkout;
+  if ($('#toTimer', v)) $('#toTimer', v).onclick = () => timerSetup(w.planId, w.dayIdx);
 }
 function finishWorkout() {
   const w = S.wip; const mins = Math.max(1, Math.round((Date.now() - w.start) / 60000));
@@ -14425,6 +14436,7 @@ function viewMore() {
   const v = V(`
     <a class="item" href="#profile"><div class="grow"><div class="t">Profil</div><div class="s">${esc(p.name || 'ohne Namen')} · ${SPORTS[p.sport] ? SPORTS[p.sport].name : ''} · ${esc((LEVELS[p.level] || '').split(' (')[0])}</div></div>${CHEV}</a>
     <a class="item" href="#tests"><div class="grow"><div class="t">⏱ Athletik-Check</div><div class="s">Eingangstest &amp; Retest mit Verlauf</div></div>${CHEV}</a>
+    <a class="item" href="#ziele"><div class="grow"><div class="t">🎯 Ziele</div><div class="s">${activeGoals().length} aktiv · ${S.goals.filter(g => g.done).length} erreicht</div></div>${CHEV}</a>
     <a class="item" href="#bericht"><div class="grow"><div class="t">📤 Wochenbericht an Trainer</div><div class="s">Per QR-Code oder Text-Code, du entscheidest, was übertragen wird</div></div>${CHEV}</a>
     <a class="item" href="#wettkaempfe"><div class="grow"><div class="t">🏆 Wettkämpfe</div><div class="s">Planen, Ergebnisse eintragen</div></div>${CHEV}</a>
     <a class="item" href="#arten"><div class="grow"><div class="t">🎨 Trainingsarten</div><div class="s">Eigene Arten für das Tagebuch</div></div>${CHEV}</a>
@@ -14442,6 +14454,8 @@ function viewMore() {
     <div class="btns"><button class="btn" id="exp">💾 Sicherung teilen/speichern</button><label class="btn" for="impF">⬆ Sicherung laden</label></div>
     <p class="tiny">${S.lastBackup ? 'Letzte Sicherung: ' + fmtDate(S.lastBackup) : 'Noch keine Sicherung erstellt.'}</p>
     <input type="file" id="impF" accept="application/json,.json" hidden>
+    <div class="btns"><button class="btn" id="csvLog">📊 Tagebuch als Tabelle</button><button class="btn" id="csvTests">📊 Tests als Tabelle</button></div>
+    <p class="tiny">Tabellen (CSV) lassen sich direkt mit Excel oder Numbers öffnen.</p>
     <button class="btn btn-danger btn-block" id="wipe">Alle Daten löschen</button>
     <p class="tiny" style="margin-top:16px">Alle Daten liegen ausschließlich auf diesem Gerät (Browser-Speicher). Beim Löschen der Browserdaten gehen sie verloren – mache gelegentlich eine Datensicherung.<br>
     AVG Leistungsteam · Version ${APP_VERSION} · Enthält jsQR (Apache-2.0), qrcode-generator (MIT), lz-string (MIT).</p>
@@ -14463,6 +14477,8 @@ function viewMore() {
       <button class="btn btn-dark btn-block" id="qc">Schließen</button>`, sh => { $('#qc', sh).onclick = closeModal; });
   };
   $('#exp', v).onclick = doBackup;
+  $('#csvLog', v).onclick = () => S.log.length ? exportLog() : toast('Noch keine Tagebuch-Einträge.');
+  $('#csvTests', v).onclick = () => S.tests.length ? exportTests() : toast('Noch keine Testergebnisse.');
   $('#impF', v).onchange = e => {
     const f = e.target.files[0]; if (!f) return; const r = new FileReader();
     r.onload = async () => { try { const o = JSON.parse(r.result); if (!o || o.v !== 1 || !Array.isArray(o.plans) || !Array.isArray(o.log)) throw 0;
@@ -14631,7 +14647,8 @@ function viewKader() {
         <div class="s">${fmtDate(r.from)} – ${fmtDate(r.to)} · ${r.d.filter(x => x.type !== 'befinden').length} Einheiten</div>${ev.reasons.length ? `<div class="s">${esc(ev.reasons.slice(0, 2).join(' · '))}</div>` : ''}</div>${CHEV}</a>`; }).join('') || '<div class="empty"><div class="big">👥</div><p>Noch keine Berichte. Schüler öffnen in ihrer App Tagebuch → „Bericht an Trainer“, du scannst den Code.</p></div>'}
     <div class="card small" style="margin-top:14px"><b>Ampel:</b> Rot bei Schmerz über 5, dreimal in Folge wenig Energie oder Belastungssprung über 150 %. Gelb bei Schmerz 4–5, aktiver Beschwerde, wenig Schlaf oder Energie, Belastung über 130 % oder ohne Einheiten. Die Ampel ist ein Gesprächsanlass, keine Diagnose.</div>
     <p class="tiny">Kaderdaten liegen nur auf diesem Gerät und werden nach 6 Monaten automatisch gelöscht.</p>
-    ${S.kader.length ? '<button class="btn btn-danger btn-block" id="kDel">Alle Kaderdaten löschen</button>' : ''}`);
+    ${S.kader.length ? '<button class="btn btn-block" id="kCsv">📊 Kader als Tabelle</button><button class="btn btn-danger btn-block" id="kDel" style="margin-top:8px">Alle Kaderdaten löschen</button>' : ''}`);
+  if ($('#kCsv', v)) $('#kCsv', v).onclick = exportKader;
   if ($('#kDel', v)) $('#kDel', v).onclick = async () => { if (!await confirmBox('Alle Berichte aller Athleten löschen?', 'Löschen', true)) return; S.kader = []; save(); route(); };
 }
 function viewAthlete(rid) {
@@ -14661,6 +14678,199 @@ function viewAthlete(rid) {
     ${a.reports.length > 1 ? `<div class="card small"><h3>Frühere Berichte</h3>${a.reports.slice(1).map(x => { const e = evalReport(x); return `<p><span class="dot" style="display:inline-block;background:${AMPEL[e.lvl].c}"></span> ${fmtDate(x.from)} – ${fmtDate(x.to)} · ${x.d.filter(y => y.type !== 'befinden').length} Einheiten · Belastung ${x.d.reduce((s, y) => s + y.dur * y.rpe, 0)}</p>`; }).join('')}</div>` : ''}
     <div class="btns"><a class="btn btn-dark" href="#plans">📋 Plan anpassen &amp; teilen</a><button class="btn btn-danger" id="aDel">Athlet löschen</button></div>`);
   $('#aDel', v).onclick = async () => { if (!await confirmBox(`Alle Berichte von ${a.who} löschen?`, 'Löschen', true)) return; S.kader = S.kader.filter(x => x.rid !== rid); save(); go('#kader'); };
+}
+
+/* ================= Paket 4: Ziele, Timer, Export ================= */
+/* ---------- Ziele ---------- */
+const HORIZONS = [[1, 'in 1 Monat'], [3, 'in 3 Monaten'], [6, 'in 6 Monaten'], [12, 'in 12 Monaten']];
+function addMonths(d, m) { const x = new Date(d + 'T12:00:00'); x.setMonth(x.getMonth() + m); return x.toISOString().slice(0, 10); }
+function testBest(tid) { const T = TESTS.find(x => x.id === tid); const r = testResults(tid); if (!r.length || !T) return null; return T.better === 'lo' ? Math.min(...r.map(x => x.v)) : Math.max(...r.map(x => x.v)); }
+function goalProgress(g) {
+  if (!g.test) return null; const T = TESTS.find(x => x.id === g.test); if (!T) return null;
+  const best = testBest(g.test); const first = testResults(g.test).filter(x => x.date <= g.created).map(x => x.v);
+  const start = g.startVal != null ? g.startVal : first.length ? first[first.length - 1] : null;
+  if (best == null) return { T, best: null, pct: 0, reached: false };
+  const reached = T.better === 'lo' ? best <= g.target : best >= g.target;
+  let pct = reached ? 100 : start != null && start !== g.target ? Math.max(0, Math.min(100, (best - start) / (g.target - start) * 100)) : 0;
+  return { T, best, pct: Math.round(pct), reached };
+}
+function activeGoals() { return S.goals.filter(g => !g.done).sort((a, b) => a.due.localeCompare(b.due)); }
+function goalCard(g, compact) {
+  const d = daysUntil(g.due), pr = goalProgress(g);
+  return `<div class="card ${compact ? 'small' : ''}" ${compact ? 'data-go="#ziele" style="cursor:pointer"' : ''}><div class="row"><span class="grow"><b>🎯 ${esc(g.text)}</b></span>${g.done ? `<span class="badge ok">erreicht ${fmtDate(g.done)}</span>` : `<span class="badge ${d < 0 ? 'accent' : d <= 7 ? 'accent' : ''}">${d < 0 ? 'überfällig' : d === 0 ? 'heute' : 'noch ' + d + ' Tage'}</span>`}</div>
+    <p class="tiny">bis ${fmtDate(g.due)}${pr ? ` · ${esc(pr.T.n)}: Ziel ${String(g.target).replace('.', ',')} ${esc(pr.T.u)}, bisher ${pr.best == null ? '–' : String(pr.best).replace('.', ',') + ' ' + esc(pr.T.u)}` : ''}</p>
+    ${pr ? `<div class="progress" style="margin-top:4px"><i style="width:${pr.pct}%"></i></div>` : ''}
+    ${!compact && !g.done ? `<div class="btns">${pr && pr.reached ? '<span class="small" style="color:var(--ok);align-self:center">✓ Testwert erreicht!</span>' : ''}<button class="btn btn-sm btn-dark" data-gdone="${g.id}">✓ Erreicht</button><button class="btn btn-sm btn-danger" data-gdel="${g.id}">Löschen</button></div>` : ''}
+    ${!compact && g.done ? `<div class="btns"><button class="btn btn-sm btn-danger" data-gdel="${g.id}">Löschen</button></div>` : ''}</div>`;
+}
+function editGoal() {
+  openModal(`<h3>Neues Ziel</h3>
+    <label class="f" for="gT">Was willst du erreichen?</label><input id="gT" maxlength="80" placeholder="z. B. 10 saubere Klimmzüge">
+    <label class="f">Bis wann?</label><div class="chips" id="gH">${HORIZONS.map(([m, l], i) => `<button class="chip ${i === 0 ? 'on' : ''}" data-m="${m}">${l}</button>`).join('')}</div>
+    <label class="f" for="gTest">Mit einem Athletik-Test verknüpfen? <span class="tiny">(optional, dann misst die App den Fortschritt)</span></label>
+    <select id="gTest"><option value="">nein</option>${TESTS.filter(t => t.better !== 'none').map(t => `<option value="${t.id}">${esc(t.n)} (${esc(t.u)})</option>`).join('')}</select>
+    <div id="gTgt" hidden><label class="f" for="gV">Zielwert <span id="gU" class="tiny"></span></label><input id="gV" inputmode="decimal"><p class="tiny" id="gBest"></p></div>
+    <div class="btns"><button class="btn" id="gX">Abbrechen</button><button class="btn btn-primary" id="gS">Speichern</button></div>`, sh => {
+    let m = 1; $$('#gH .chip', sh).forEach(b => b.onclick = () => { m = +b.dataset.m; $$('#gH .chip', sh).forEach(x => x.classList.toggle('on', x === b)); });
+    $('#gTest', sh).onchange = e => { const T = TESTS.find(x => x.id === e.target.value); $('#gTgt', sh).hidden = !T; if (T) { $('#gU', sh).textContent = '(' + T.u + (T.better === 'lo' ? ', weniger ist besser)' : ')'); const b = testBest(T.id); $('#gBest', sh).textContent = b == null ? 'Noch kein Testergebnis – trage es im Athletik-Check ein.' : 'Bisher bester Wert: ' + String(b).replace('.', ',') + ' ' + T.u; } };
+    $('#gX', sh).onclick = closeModal;
+    $('#gS', sh).onclick = () => {
+      const t = $('#gT', sh).value.trim(); if (!t) return toast('Bitte das Ziel beschreiben.');
+      const g = { id: 'g' + uid(), text: t, created: today(), due: addMonths(today(), m), done: null };
+      const tid = $('#gTest', sh).value; if (tid) { const v = num($('#gV', sh).value); if (v == null) return toast('Bitte einen Zielwert eingeben.'); g.test = tid; g.target = v; const b = testBest(tid); if (b != null) g.startVal = b; }
+      S.goals.push(g); save(); closeModal(); toast('Ziel gespeichert 🎯'); route();
+    };
+  });
+}
+function viewGoals() {
+  setTitle('Ziele', true);
+  const act = activeGoals(), done = S.goals.filter(g => g.done).sort((a, b) => b.done.localeCompare(a.done));
+  const v = V(`<div class="card hero" style="margin-top:6px"><div class="muted small">Mein großes Ziel</div>
+      <textarea id="dream" maxlength="160" style="margin-top:6px;background:transparent;color:inherit;border-color:rgba(127,127,127,.4)" placeholder="z. B. Bayerische Meisterschaft über 100 m Freistil">${esc(S.dream || '')}</textarea></div>
+    <p class="small muted">Kleine Ziele auf dem Weg dahin machen Fortschritt sichtbar. Am besten 1–3 Ziele gleichzeitig.</p>
+    <button class="btn btn-dark btn-block" id="gNew">＋ Neues Ziel</button>
+    <h2>Aktiv</h2>${act.map(g => goalCard(g)).join('') || '<p class="muted small">Noch keine Ziele.</p>'}
+    ${done.length ? `<h2>Erreicht 🏅</h2>${done.map(g => goalCard(g)).join('')}` : ''}`);
+  $('#dream', v).onchange = e => { S.dream = e.target.value.trim(); save(); toast('Gespeichert'); };
+  $('#gNew', v).onclick = editGoal;
+  $$('[data-gdone]', v).forEach(b => b.onclick = () => { S.goals.find(g => g.id === b.dataset.gdone).done = today(); save(); toast('Stark – Ziel erreicht! 🏅'); route(); });
+  $$('[data-gdel]', v).forEach(b => b.onclick = async () => { if (!await confirmBox('Ziel löschen?', 'Löschen', true)) return; S.goals = S.goals.filter(g => g.id !== b.dataset.gdel); save(); route(); });
+}
+/* ---------- Durchlaufender Timer ---------- */
+function stopTimerRun() { clearInterval(runInt); runInt = null; if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; } try { speechSynthesis.cancel(); } catch (e) { /* */ } }
+function say(t) { if (!run || !run.voice) return; try { const u = new SpeechSynthesisUtterance(t); u.lang = 'de-DE'; u.rate = 1.05; speechSynthesis.cancel(); speechSynthesis.speak(u); } catch (e) { /* kein Sprachausgabe */ } }
+function shortBeep(f = 660) { try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); const o = audioCtx.createOscillator(), g = audioCtx.createGain(); o.frequency.value = f; o.connect(g); g.connect(audioCtx.destination); const t = audioCtx.currentTime; g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.35, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15); o.start(t); o.stop(t + 0.17); } catch (e) { /* */ } }
+function timerSetup(planId, dayIdx) {
+  const p = S.plans.find(x => x.id === planId), d = p.days[dayIdx];
+  openModal(`<h3>⏱ Timer: ${esc(d.n)}</h3><p class="small muted">Der Timer führt dich mit Ansage und Signaltönen durch die Einheit. Der Bildschirm bleibt an.</p>
+    <div class="chips" id="tmM"><button class="chip on" data-m="plan">Nach Plan</button><button class="chip" data-m="zirkel">Zirkel (Intervalle)</button></div>
+    <p class="tiny" id="tmInfo">Übungen auf Zeit laufen automatisch. Bei Wiederholungs-Übungen tippst du nach dem Satz auf „Satz fertig“, dann startet die Pause.</p>
+    <div id="tmZ" hidden><div class="grid2"><div><label class="f" for="tmW">Belastung (s)</label><input id="tmW" type="number" min="5" max="300" value="40" inputmode="numeric"></div>
+      <div><label class="f" for="tmP">Pause / Wechsel (s)</label><input id="tmP" type="number" min="0" max="300" value="20" inputmode="numeric"></div></div>
+      <div class="grid2"><div><label class="f" for="tmR">Runden</label><input id="tmR" type="number" min="1" max="10" value="2" inputmode="numeric"></div>
+      <div><label class="f" for="tmRP">Pause zwischen Runden (s)</label><input id="tmRP" type="number" min="0" max="600" value="60" inputmode="numeric"></div></div>
+      <p class="tiny">Alle ${d.i.length} Übungen als Stationen nacheinander, dann die nächste Runde.</p></div>
+    <label class="row" style="margin-top:10px"><input type="checkbox" id="tmV" style="width:auto" checked> <span>Übungen ansagen (Sprachausgabe)</span></label>
+    <div class="btns"><button class="btn" id="tmX">Abbrechen</button><button class="btn btn-primary" id="tmGo">▶ Starten</button></div>`, sh => {
+    let mode = 'plan';
+    $$('#tmM .chip', sh).forEach(b => b.onclick = () => { mode = b.dataset.m; $$('#tmM .chip', sh).forEach(x => x.classList.toggle('on', x === b)); $('#tmZ', sh).hidden = mode !== 'zirkel'; $('#tmInfo', sh).hidden = mode !== 'plan'; });
+    $('#tmX', sh).onclick = closeModal;
+    $('#tmGo', sh).onclick = async () => {
+      const cfg = { mode, work: Math.max(5, parseInt($('#tmW', sh).value) || 40), rest: Math.max(0, parseInt($('#tmP', sh).value) || 0), rounds: Math.min(10, Math.max(1, parseInt($('#tmR', sh).value) || 1)), roundRest: Math.max(0, parseInt($('#tmRP', sh).value) || 0), voice: $('#tmV', sh).checked };
+      try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch (e) { /* */ }
+      closeModal(); await startTimerRun(planId, dayIdx, cfg);
+    };
+  });
+}
+async function startTimerRun(planId, dayIdx, cfg) {
+  if (S.wip && (S.wip.planId !== planId || S.wip.dayIdx !== dayIdx)) { if (!await confirmBox('Es läuft noch ein anderes Training. Verwerfen?', 'Verwerfen', true)) return; S.wip = null; }
+  if (!S.wip) {
+    const p = S.plans.find(x => x.id === planId), d = p.days[dayIdx];
+    S.wip = { planId, dayIdx, title: d.n, start: Date.now(), items: d.i.map(it => ({ ex: it.ex, target: it, sets: Array.from({ length: cfg.mode === 'zirkel' ? cfg.rounds : Math.max(1, parseInt(it.sets) || 1) }, () => ({ r: '', kg: '', pn: '', done: false })) })) };
+  } else if (cfg.mode === 'zirkel') S.wip.items.forEach(it => { while (it.sets.length < cfg.rounds) it.sets.push({ r: '', kg: '', pn: '', done: false }); });
+  save();
+  const steps = [{ type: 'prep', sec: 10, idx: 0, set: 0 }];
+  const items = S.wip.items;
+  if (cfg.mode === 'plan') {
+    items.forEach((it, i) => it.sets.forEach((st, k) => {
+      if (st.done) return;
+      const last = steps[steps.length - 1]; if (steps.length > 1 && last.idx !== i && last.type !== 'rest') steps.push({ type: 'prep', sec: 10, idx: i, set: k });
+      const tm = isTimed(it.target.reps);
+      steps.push({ type: tm ? 'work' : 'manual', sec: tm ? timedSeconds(it.target.reps) : 0, idx: i, set: k });
+      const rest = parseInt(it.target.rest) || 0; if (rest) steps.push({ type: 'rest', sec: rest, idx: i, set: k });
+    }));
+  } else {
+    for (let r = 0; r < cfg.rounds; r++) items.forEach((it, i) => { steps.push({ type: 'work', sec: cfg.work, idx: i, set: r }); if (cfg.rest) steps.push({ type: 'rest', sec: cfg.rest, idx: i, set: r }); if (i === items.length - 1 && r < cfg.rounds - 1 && cfg.roundRest) steps.push({ type: 'rest', sec: cfg.roundRest, idx: 0, set: r + 1, round: true }); });
+  }
+  while (steps.length && steps[steps.length - 1].type === 'rest') steps.pop();
+  run = { cfg, steps, i: 0, end: 0, paused: false, left: 0, voice: cfg.voice };
+  try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* optional */ }
+  go('#timer'); beginStep();
+}
+function curStep() { return run && run.steps[run.i]; }
+function beginStep() {
+  const st = curStep(); if (!st) return finishRun();
+  run.end = st.sec ? Date.now() + st.sec * 1000 : 0; run.last = null;
+  const e = ex(S.wip.items[st.idx].ex);
+  if (st.type === 'work' || st.type === 'manual') { shortBeep(990); say(e.n); }
+  if (st.type === 'prep') say('Gleich: ' + e.n);
+  if (st.type === 'rest' && st.round) say('Rundenpause');
+  drawTimer();
+}
+function nextStep() {
+  const st = curStep(); if (!st) return;
+  if (st.type === 'work' || st.type === 'manual') { const s0 = S.wip.items[st.idx].sets[st.set]; if (s0) { s0.done = true; if (!s0.r) s0.r = String(st.type === 'work' ? st.sec : (String(S.wip.items[st.idx].target.reps).match(/\d+/) || [''])[0]); } save(); }
+  run.i++; beginStep();
+}
+function tickRun() {
+  if (!run || run.paused) return; const st = curStep(); if (!st || !st.sec) return;
+  const left = Math.ceil((run.end - Date.now()) / 1000);
+  if (left !== run.last) { run.last = left; if (left <= 3 && left > 0) shortBeep(660); const el = $('#tmTime'); if (el) el.textContent = fmtSec(Math.max(0, left)); }
+  if (left <= 0) { if (st.type === 'work') beep(2); nextStep(); }
+}
+function viewTimer() {
+  if (!run || !S.wip) { stopTimerRun(); return go(S.wip ? '#workout' : '#plans'); }
+  setTitle('Timer · ' + S.wip.title, true); document.body.classList.add('workout');
+  V('<div id="tmBox"></div>'); drawTimer();
+  clearInterval(runInt); runInt = setInterval(tickRun, 200);
+}
+function drawTimer() {
+  const box = $('#tmBox'); if (!box || !run) return; const st = curStep(); if (!st) return;
+  const it = S.wip.items[st.idx], e = ex(it.ex), t = it.target;
+  const nextW = run.steps.slice(run.i + 1).find(x => x.type === 'work' || x.type === 'manual');
+  const ph = { prep: ['Gleich geht’s los', 'var(--ink3)'], work: ['Belastung', 'var(--accent)'], manual: ['Dein Satz', 'var(--accent)'], rest: [st.round ? 'Rundenpause' : 'Pause', 'var(--ok)'] }[st.type];
+  const nWork = run.steps.filter(x => x.type === 'work' || x.type === 'manual').length, doneW = run.steps.slice(0, run.i).filter(x => x.type === 'work' || x.type === 'manual').length;
+  const m = exMeasure(e, t);
+  box.innerHTML = `<div class="progress" style="margin-top:6px"><i style="width:${doneW / nWork * 100}%"></i></div><p class="tiny" style="text-align:center">${doneW} von ${nWork} ${run.cfg.mode === 'zirkel' ? 'Stationen' : 'Sätzen'}</p>
+    <div class="tm-card" style="border-color:${ph[1]}"><div class="tm-phase" style="color:${ph[1]}">${ph[0]}</div>
+      <h2 class="tm-ex">${esc(e.n)}</h2>
+      <p class="small muted">${run.cfg.mode === 'zirkel' ? `Runde ${st.set + 1} von ${run.cfg.rounds}` : `Satz ${st.set + 1} von ${it.sets.length} · Ziel ${esc(t.reps)}${t.load ? ' · ' + esc(t.load) : ''}`}</p>
+      ${st.type === 'manual' ? `<div class="tm-time" style="font-size:2.6rem">${esc(t.reps)}</div><p class="small">${esc(m.a.h)}</p>` : `<div class="tm-time" id="tmTime">${fmtSec(Math.max(0, Math.ceil((run.end - Date.now()) / 1000)) || st.sec)}</div>`}
+      ${t.note && st.type !== 'rest' ? `<p class="small">${esc(t.note)}</p>` : ''}</div>
+    ${nextW ? `<p class="small muted" style="text-align:center">Danach: <b>${esc(ex(S.wip.items[nextW.idx].ex).n)}</b></p>` : '<p class="small muted" style="text-align:center">Danach: geschafft!</p>'}
+    ${st.type === 'manual' ? '<button class="btn btn-primary btn-lg btn-block" id="tmDone">✓ Satz fertig</button>' : ''}
+    <div class="btns"><button class="btn" id="tmPause">${run.paused ? '▶ Weiter' : '⏸ Pause'}</button><button class="btn" id="tmSkip">⏭ Überspringen</button><button class="btn btn-danger" id="tmStop">Beenden</button></div>
+    <div class="row" style="justify-content:center"><label class="row small"><input type="checkbox" id="tmVoice" style="width:auto" ${run.voice ? 'checked' : ''}> Ansage</label></div>`;
+  if ($('#tmDone')) $('#tmDone').onclick = nextStep;
+  $('#tmPause').onclick = () => { if (run.paused) { run.end = Date.now() + run.left; run.paused = false; } else { run.left = run.end - Date.now(); run.paused = true; } drawTimer(); };
+  $('#tmSkip').onclick = () => { run.i++; beginStep(); };
+  $('#tmStop').onclick = async () => { if (!await confirmBox('Timer beenden? Bisher erledigte Sätze bleiben gespeichert.', 'Beenden')) return; stopTimerRun(); run = null; go('#workout'); };
+  $('#tmVoice').onchange = e2 => { run.voice = e2.target.checked; };
+}
+function finishRun() {
+  stopTimerRun(); beep(3); say('Geschafft!'); run = null;
+  V(`<div class="empty" style="padding-top:40px"><div class="big">🎉</div><h2>Geschafft!</h2><p>Stark durchgezogen. Trag jetzt noch ein, wie anstrengend es war.</p>
+    <button class="btn btn-primary btn-lg" id="tmFin">Training speichern</button><p><a href="#workout" class="small">Sätze vorher ansehen</a></p></div>`);
+  $('#tmFin').onclick = () => { go('#workout'); setTimeout(finishWorkout, 50); };
+}
+/* ---------- Export als Tabelle (CSV, für Excel) ---------- */
+async function shareOrDownload(name, text, mime) {
+  try { const file = new File([text], name, { type: mime });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+  const blob = new Blob([text], { type: mime }); const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  toast('Tabelle gespeichert: ' + name);
+}
+function csv(rows) {
+  const cell = v => { if (v == null) return ''; if (typeof v === 'number') return String(v).replace('.', ','); const s2 = String(v); return /[;"\n\r]/.test(s2) ? '"' + s2.replace(/"/g, '""') + '"' : s2; };
+  return '﻿' + rows.map(r => r.map(cell).join(';')).join('\r\n');
+}
+function exportLog() {
+  const head = ['Datum', 'Art', 'Einheit / Plan', 'Dauer (min)', 'Anstrengung (1-10)', 'Belastung (RPE x min)', 'Schlaf (1-4)', 'Energie im Training (1-4)', 'Energie danach (1-4)', 'Energie Tag (1-4)', 'Muskelkater', 'Schmerz max (0-10)', 'Beschwerden', 'km', 'Spielminuten', 'Matches', 'Notiz'];
+  const rows = S.log.slice().sort((a, b) => a.date.localeCompare(b.date) || (a.ts || 0) - (b.ts || 0)).map(l => [l.date, typeName(l.type).replace(/^\S+\s/, ''), l.type === 'app' ? l.title + (l.plan ? ' (' + l.plan + ')' : '') : '', l.type === 'befinden' ? '' : l.dur, l.type === 'befinden' ? '' : l.rpe, l.type === 'befinden' ? '' : l.dur * l.rpe,
+    l.sl || '', l.ei || '', l.eo || '', l.ed || '', l.mk === true ? 'ja' : l.mk === false ? 'nein' : '', l.pain === true ? 'ja' : l.pain || '',
+    Object.entries(l.cp || {}).map(([id, v]) => (complaintById(id) || { name: '?' }).name + ' ' + v).join(', '), l.km || '', l.spielmin || '', l.matches || '', l.note || '']);
+  shareOrDownload(`trainingstagebuch-${today()}.csv`, csv([head, ...rows]), 'text/csv');
+}
+function exportTests() {
+  const rows = S.tests.slice().sort((a, b) => a.date.localeCompare(b.date)).map(t => { const T = TESTS.find(x => x.id === t.t) || { n: t.t, u: '' }; return [t.date, T.n, t.v, T.u]; });
+  shareOrDownload(`athletik-tests-${today()}.csv`, csv([['Datum', 'Test', 'Ergebnis', 'Einheit'], ...rows]), 'text/csv');
+}
+function exportKader() {
+  const head = ['Kürzel', 'Sportart', 'Zeitraum von', 'bis', 'Ampel', 'Gründe', 'Einheiten', 'Minuten', 'Belastung', 'Schlaf Ø', 'Energie Ø', 'Schmerz max', 'Beschwerden aktiv'];
+  const rows = S.kader.map(a => { const r = a.reports[0], e = evalReport(r), tr = r.d.filter(x => x.type !== 'befinden'); const sl = r.d.filter(x => x.sl).map(x => x.sl), en = r.d.filter(x => x.ei || x.ed).map(x => x.ei || x.ed);
+    const pains = r.d.map(x => x.pain).concat(r.cp.flatMap(c => c.h.map(h => h.v)));
+    return [a.who, SPORTS[a.sp] ? SPORTS[a.sp].name : '', r.from, r.to, AMPEL[e.lvl].t, e.reasons.join(', '), tr.length, tr.reduce((x, y) => x + y.dur, 0), tr.reduce((x, y) => x + y.dur * y.rpe, 0), sl.length ? Math.round(avg(sl) * 10) / 10 : '', en.length ? Math.round(avg(en) * 10) / 10 : '', pains.length ? Math.max(...pains) : '', r.cp.filter(c => !c.healed).map(c => c.name).join(', ')]; });
+  shareOrDownload(`kader-${today()}.csv`, csv([head, ...rows]), 'text/csv');
 }
 
 /* ================= Update ================= */
