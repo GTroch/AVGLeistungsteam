@@ -13092,7 +13092,7 @@ const SAFETY_TIPS = [
 /* ================= Logo, Manifest & Installation ================= */
 const LOGO = window.AVG_LOGO || 'img/logo.png';
 const IS_WEB = /^https?:$/.test(location.protocol);
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.4';
 let updateInfo = null;   // { version }, wenn auf der Webseite eine neuere Version liegt
 (function setupManifest() {
   if (!IS_WEB || document.querySelector('link[rel="manifest"]')) return;
@@ -13175,7 +13175,7 @@ const CHEV = '<svg class="chev" viewBox="0 0 24 24" width="20" height="20"><path
 const KEY = 'avg-leistungsteam-v1';
 function blank() {
   return { v: 1, profile: { name: '', sport: '', level: 'einsteiger', onboarded: false },
-    plans: [], customEx: [], log: [], tests: [], complaints: [], types: [], events: [], lastBackup: null, activePlan: null, wip: null, tip: 0 };
+    plans: [], customEx: [], log: [], tests: [], complaints: [], types: [], events: [], kader: [], lastBackup: null, activePlan: null, wip: null, tip: 0 };
 }
 let S = (() => {
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v === 1) return Object.assign(blank(), s); } catch (e) { /* leer */ }
@@ -13233,7 +13233,7 @@ function go(h) { if (location.hash === h) route(); else location.hash = h; }
 const ROUTES = {
   home: viewHome, plans: viewPlans, plan: viewPlan, edit: viewEdit, templates: viewTemplates,
   lib: viewLib, ex: viewEx, log: viewLog, tests: viewTests, more: viewMore,
-  scan: viewScan, share: viewShare, workout: viewWorkout, onboard: viewOnboard, safety: viewSafety, profile: viewProfile, beschwerden: viewComplaints, wettkaempfe: viewEvents, arten: viewTypes
+  scan: viewScan, share: viewShare, workout: viewWorkout, onboard: viewOnboard, safety: viewSafety, profile: viewProfile, beschwerden: viewComplaints, wettkaempfe: viewEvents, arten: viewTypes, bericht: viewReport, kader: viewKader, athlet: viewAthlete
 };
 let pendingImport = null;
 function route() {
@@ -13250,7 +13250,7 @@ function route() {
   fn(arg);
   window.scrollTo(0, 0);
 }
-function tabOf(n) { return { plan: 'plans', edit: 'plans', templates: 'plans', share: 'plans', ex: 'lib', tests: 'more', safety: 'more', profile: 'more', beschwerden: 'log', wettkaempfe: 'log', arten: 'log' }[n] || n; }
+function tabOf(n) { return { plan: 'plans', edit: 'plans', templates: 'plans', share: 'plans', ex: 'lib', tests: 'more', safety: 'more', profile: 'more', beschwerden: 'log', wettkaempfe: 'log', arten: 'log', bericht: 'log', kader: 'more', athlet: 'more' }[n] || n; }
 window.addEventListener('hashchange', route);
 
 function V(html) { $('#view').innerHTML = html; return $('#view'); }
@@ -13475,6 +13475,7 @@ function viewHome() {
     ${ewarn ? `<div class="card warn small">🔋 ${esc(ewarn)}</div>` : ''}
     ${updateInfo ? `<div class="card row tip"><div class="grow"><b>🔄 Update verfügbar</b><div class="small muted">Version ${esc(updateInfo.version)} ist da. Deine Daten bleiben erhalten.</div></div><button class="btn btn-primary btn-sm" id="homeUp">Aktualisieren</button></div>` : ''}
     ${eventHints().map(h => `<div class="card ${h.cls || ''} small" ${h.go ? `data-go="${h.go}" style="cursor:pointer"` : ''}>${h.html}</div>`).join('')}
+    ${S.profile.trainer && S.kader.length ? (() => { const ev = S.kader.map(a => evalReport(a.reports[0]).lvl); return `<a class="item" href="#kader"><div class="grow"><div class="t">👥 Kader: ${S.kader.length} Athleten</div><div class="s"><span style="color:${AMPEL.rot.c}">● ${ev.filter(x => x === 'rot').length} rot</span> · <span style="color:${AMPEL.gelb.c}">● ${ev.filter(x => x === 'gelb').length} gelb</span> · <span style="color:${AMPEL.gruen.c}">● ${ev.filter(x => x === 'gruen').length} grün</span></div></div>${CHEV}</a>`; })() : ''}
     ${act.length ? `<a class="item" href="#beschwerden"><div class="grow"><div class="t">🩹 Aktive Beschwerden</div><div class="s">${act.map(c => { const h = complaintHistory(c.id), l = h[h.length - 1]; return esc(c.name) + (l ? ' (zuletzt ' + l.v + '/10)' : ''); }).join(' · ')}</div></div>${CHEV}</a>` : ''}
     <div class="grid2">
       <button class="btn" id="qLog">＋ Vereinstraining</button>
@@ -14064,6 +14065,7 @@ function viewLog() {
     ${eventHints().map(h => `<div class="card ${h.cls || ''} small" ${h.go ? `data-go="${h.go}" style="cursor:pointer"` : ''}>${h.html}</div>`).join('')}
     <button class="btn btn-dark btn-block" id="addLog">＋ Training eintragen (Verein, Spiel …)</button>
     <div class="btns"><button class="btn" id="addBef">🌙 Befinden</button><a class="btn" href="#beschwerden">🩹 Beschwerden${activeComplaints().length ? ' (' + activeComplaints().length + ')' : ''}</a><a class="btn" href="#wettkaempfe">🏆 Wettkämpfe</a></div>
+    <a class="btn btn-block" href="#bericht">📤 Wochenbericht an Trainer</a>
     ${distributionHtml()}
     <div class="chips" style="margin-top:12px"><button class="chip ${logView === 'list' ? 'on' : ''}" data-lv="list">Liste</button><button class="chip ${logView === 'cal' ? 'on' : ''}" data-lv="cal">Kalender</button><a class="chip" href="#arten" style="text-decoration:none">Trainingsarten …</a></div>
     ${logView === 'cal' ? calendarHtml(calMonth || today().slice(0, 7)) : `<h2>Alle Einträge</h2>
@@ -14214,6 +14216,9 @@ async function encodePlans(plans) {
   const payload = { k: 'plans',
     x: [...usedCustom].map(id => { const e = ex(id); return trimArr([id, e.n, e.cat, e.eq || '', e.d || '', (e.c || []).join('\n')]); }),
     p: plans.map(p => [p.name, p.sport || '', p.weeks || 0, p.dl || 0, p.notes || '', p.days.map(d => [d.n, d.i.map(i => trimArr([i.ex, i.sets, i.reps, i.rest, i.load || '', i.note || '']))])]) };
+  return encodeObj(payload);
+}
+async function encodeObj(payload) {
   const json = JSON.stringify(payload);
   if (HAS_DEFLATE) { try { return { ver: 'AVG3', data: b44enc(await deflate(json)) }; } catch (e) { /* Fallback */ } }
   return { ver: 'AVG2', data: b44enc(LZString.compressToUint8Array(json)) };
@@ -14377,7 +14382,9 @@ async function decodePayload(code) {
   if (m[1] === 'AVG3' && !HAS_DEFLATE) throw new Error('Browser zu alt – bitte Handy/Browser aktualisieren (iPhone: ab iOS 16.4)');
   const json = m[1] === 'AVG3' ? await inflate(b44dec(m[2])) : m[1] === 'AVG2' ? LZString.decompressFromUint8Array(b44dec(m[2])) : LZString.decompressFromEncodedURIComponent(m[2]);
   if (!json) throw new Error('Daten beschädigt');
-  const o = JSON.parse(json); if (!o || o.k !== 'plans' || !Array.isArray(o.p)) throw new Error('Unbekannter Inhalt');
+  const o = JSON.parse(json);
+  if (o && o.k === 'report') return { report: sanitizeReport(o) };
+  if (!o || o.k !== 'plans' || !Array.isArray(o.p)) throw new Error('Unbekannter Inhalt');
   const str = (v, max) => String(v == null ? '' : v).slice(0, max);
   const int = (v, lo, hi) => Math.min(hi, Math.max(lo, parseInt(v) || 0));
   const xs = (Array.isArray(o.x) ? o.x : []).slice(0, 100).map(a => ({ oid: str(a[0], 40), n: str(a[1], 50) || 'Übung', cat: CATS[a[2]] ? a[2] : 'kraft', eq: str(a[3], 40), d: str(a[4], 500), c: str(a[5], 300).split('\n').filter(Boolean) }));
@@ -14388,6 +14395,7 @@ async function decodePayload(code) {
 }
 async function handleCode(code) {
   let res; try { res = await decodePayload(code); } catch (e) { toast('Code konnte nicht gelesen werden (' + e.message + ').'); return; }
+  if (res.report) return receiveReport(res.report);
   const { plans, xs } = res;
   openModal(`<h3>Trainingsplan empfangen 📥</h3>
     ${plans.map(p => `<div class="card"><div class="row"><b class="grow">${esc(p.name)}</b>${sportBadge(p.sport)}</div>
@@ -14417,11 +14425,14 @@ function viewMore() {
   const v = V(`
     <a class="item" href="#profile"><div class="grow"><div class="t">Profil</div><div class="s">${esc(p.name || 'ohne Namen')} · ${SPORTS[p.sport] ? SPORTS[p.sport].name : ''} · ${esc((LEVELS[p.level] || '').split(' (')[0])}</div></div>${CHEV}</a>
     <a class="item" href="#tests"><div class="grow"><div class="t">⏱ Athletik-Check</div><div class="s">Eingangstest &amp; Retest mit Verlauf</div></div>${CHEV}</a>
+    <a class="item" href="#bericht"><div class="grow"><div class="t">📤 Wochenbericht an Trainer</div><div class="s">Per QR-Code oder Text-Code, du entscheidest, was übertragen wird</div></div>${CHEV}</a>
     <a class="item" href="#wettkaempfe"><div class="grow"><div class="t">🏆 Wettkämpfe</div><div class="s">Planen, Ergebnisse eintragen</div></div>${CHEV}</a>
     <a class="item" href="#arten"><div class="grow"><div class="t">🎨 Trainingsarten</div><div class="s">Eigene Arten für das Tagebuch</div></div>${CHEV}</a>
     <a class="item" href="#templates"><div class="grow"><div class="t">📋 Planvorlagen</div><div class="s">Schwimmen, Fußball, Handball, Tennis</div></div>${CHEV}</a>
     <a class="item" href="#safety"><div class="grow"><div class="t">❤️ Sicherheit &amp; Gesundheit</div><div class="s">Die wichtigsten Regeln</div></div>${CHEV}</a>
     <h2>Für Lehrkräfte &amp; Trainer</h2>
+    <label class="item" style="cursor:pointer"><div class="grow"><div class="t">👥 Trainer-Modus</div><div class="s">Wochenberichte der Schüler empfangen und auswerten</div></div><input type="checkbox" id="trMode" style="width:auto" ${S.profile.trainer ? 'checked' : ''}></label>
+    ${S.profile.trainer ? `<a class="item" href="#kader"><div class="grow"><div class="t">👥 Kader (${S.kader.length})</div><div class="s">Übersicht mit Ampel je Athlet</div></div>${CHEV}</a>` : ''}
     <a class="item" href="#share-all"><div class="grow"><div class="t">▣ Alle Pläne per QR teilen</div><div class="s">${S.plans.length} Pläne in einem Code-Paket</div></div>${CHEV}</a>
     <p class="small muted">Einzelne Pläne teilst du in der Planansicht über „Per QR teilen“. Plan erstellen → teilen → Schüler scannen. Fertig.</p>
     <h2>App &amp; Daten</h2>
@@ -14436,6 +14447,13 @@ function viewMore() {
     AVG Leistungsteam · Version ${APP_VERSION} · Enthält jsQR (Apache-2.0), qrcode-generator (MIT), lz-string (MIT).</p>
   `);
   if ($('#inst', v)) $('#inst', v).onclick = showInstall;
+  $('#trMode', v).onchange = async e => {
+    if (e.target.checked) {
+      const ok = await confirmBox('Trainer-Modus einschalten? Empfangene Berichte enthalten Gesundheitsdaten (Schlaf, Beschwerden). Bitte nur nach Absprache mit Schulleitung bzw. Verein nutzen.', 'Einschalten');
+      S.profile.trainer = ok;
+    } else S.profile.trainer = false;
+    save(); route();
+  };
   $('#appUpd', v).onclick = async () => { $('#appUpd', v).disabled = true; await checkUpdate(false); if ($('#appUpd')) $('#appUpd').disabled = false; };
   $('#appQr', v).onclick = () => {
     if (!IS_WEB) return toast('Erst verfügbar, wenn die App online ist.');
@@ -14459,8 +14477,10 @@ function viewProfile() {
   const v = V(`<label class="f" for="pn">Vorname / Spitzname</label><input id="pn" maxlength="30" value="${esc(p.name)}">
     <label class="f" for="ps">Sportart</label><select id="ps">${Object.entries(SPORTS).map(([k, s]) => `<option value="${k}" ${p.sport === k ? 'selected' : ''}>${s.icon} ${s.name}</option>`).join('')}</select>
     <label class="f" for="pl">Trainingserfahrung</label><select id="pl">${Object.entries(LEVELS).map(([k, l]) => `<option value="${k}" ${p.level === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <label class="f" for="pk">Kürzel für Berichte an den Trainer</label><input id="pk" maxlength="6" value="${esc(p.kuerzel || '')}" placeholder="z. B. MB oder LK12">
+    <p class="tiny">Statt deines Namens steht im Wochenbericht nur dieses Kürzel. Sprich es mit deinem Trainer ab.</p>
     <button class="btn btn-primary btn-block" id="psv" style="margin-top:16px">Speichern</button>`);
-  $('#psv', v).onclick = () => { Object.assign(S.profile, { name: $('#pn', v).value.trim(), sport: $('#ps', v).value, level: $('#pl', v).value }); libState.sp = null; save(); toast('Gespeichert'); history.back(); };
+  $('#psv', v).onclick = () => { Object.assign(S.profile, { name: $('#pn', v).value.trim(), sport: $('#ps', v).value, level: $('#pl', v).value, kuerzel: $('#pk', v).value.trim().toUpperCase() }); libState.sp = null; save(); toast('Gespeichert'); history.back(); };
 }
 function viewSafety() {
   setTitle('Sicherheit & Gesundheit', true);
@@ -14485,6 +14505,163 @@ if (splashInst) {
 }
 setTimeout(hideSplash, isStandalone() ? 1800 : 4000);
 route();
+
+/* ================= Paket 3: Wochenbericht (Schüler) & Trainer-Modus ================= */
+function addDays(d, k) { const x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + k); return x.toISOString().slice(0, 10); }
+function trimZ(a) { a = a.slice(); while (a.length && (a[a.length - 1] === '' || a[a.length - 1] == null || a[a.length - 1] === 0)) a.pop(); return a; }
+function buildReport(days, opt) {
+  if (!S.profile.rid) { S.profile.rid = uid(); save(); }
+  const to = today(), from = addDays(to, -days + 1);
+  const es = S.log.filter(l => l.date >= from && l.date <= to).sort(byTimeDesc).reverse();
+  const tcode = t => TYPES[t] ? t : (customType(t) ? '~' + customType(t).name : 'sonst');
+  const d = es.map(l => trimZ([l.date, tcode(l.type), l.dur || 0, l.rpe || 0,
+    opt.well ? l.sl || 0 : 0, opt.well ? l.ei || 0 : 0, opt.well ? l.eo || 0 : 0, opt.well ? l.ed || 0 : 0,
+    opt.well ? (l.mk === true ? 1 : l.mk === false ? 2 : 0) : 0, opt.well ? (l.pain === true ? 6 : l.pain || 0) : 0, l.km || 0, l.spielmin || 0, l.matches || 0]));
+  const cp = opt.well ? S.complaints.filter(c => c.start <= to && (!c.healed || c.healed >= from)).map(c => [c.name, c.start, c.healed || '', complaintHistory(c.id).filter(h => h.date >= from).map(h => [h.date, h.v])]) : [];
+  const t = opt.tests ? S.tests.filter(x => x.date >= from && x.date <= to).map(x => [x.t, x.date, x.v]) : [];
+  const ev = S.events.filter(e => e.date >= from && e.date <= addDays(to, 42)).map(e => trimArr([e.date, e.name, e.prio, e.result ? e.result.place : '', e.result ? e.result.score : '']));
+  const n = opt.notes ? es.filter(l => l.note).map(l => [l.date, l.note]) : [];
+  return { k: 'report', v: 1, rid: S.profile.rid, who: S.profile.kuerzel || '?', sp: S.profile.sport || '', from, to, wl: weekLoads(5).map(w => w.load), d, cp, t, ev, n };
+}
+function sanitizeReport(o) {
+  const str = (v, max) => String(v == null ? '' : v).slice(0, max), int = (v, lo, hi) => Math.min(hi, Math.max(lo, parseInt(v) || 0));
+  const fl = (v, lo, hi) => { const n = parseFloat(v); return isFinite(n) ? Math.min(hi, Math.max(lo, n)) : 0; };
+  const dt = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v) : '';
+  const arr = (v, n) => Array.isArray(v) ? v.slice(0, n) : [];
+  return { rid: str(o.rid, 24).replace(/[^a-z0-9]/gi, '') || 'x', who: str(o.who, 6).toUpperCase() || '?', sp: SPORTS[o.sp] ? o.sp : '',
+    from: dt(o.from), to: dt(o.to), wl: arr(o.wl, 5).map(x => int(x, 0, 100000)),
+    d: arr(o.d, 120).map(a => ({ date: dt(a[0]), type: str(a[1], 31), dur: int(a[2], 0, 900), rpe: int(a[3], 0, 10), sl: int(a[4], 0, 4), ei: int(a[5], 0, 4), eo: int(a[6], 0, 4), ed: int(a[7], 0, 4),
+      mk: int(a[8], 0, 2), pain: int(a[9], 0, 10), km: fl(a[10], 0, 50), spielmin: int(a[11], 0, 300), matches: int(a[12], 0, 20) })).filter(x => x.date),
+    cp: arr(o.cp, 20).map(a => ({ name: str(a[0], 40), start: dt(a[1]), healed: dt(a[2]), h: arr(a[3], 60).map(x => ({ date: dt(x[0]), v: int(x[1], 0, 10) })).filter(x => x.date) })),
+    t: arr(o.t, 60).map(a => ({ t: str(a[0], 20), date: dt(a[1]), v: fl(a[2], -1000, 100000) })).filter(x => x.date && TESTS.some(y => y.id === x.t)),
+    ev: arr(o.ev, 30).map(a => ({ date: dt(a[0]), name: str(a[1], 50), prio: int(a[2], 1, 3), place: str(a[3], 6), score: str(a[4], 30) })).filter(x => x.date),
+    n: arr(o.n, 60).map(a => ({ date: dt(a[0]), text: str(a[1], 300) })).filter(x => x.date) };
+}
+function rTypeName(t) { return t.startsWith('~') ? '• ' + t.slice(1) : (TYPES[t] || 'Training'); }
+function rTypeColor(t) { if (TYPE_COLORS[t]) return TYPE_COLORS[t]; let h = 0; for (const ch of t) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return CUSTOM_COLORS[h % CUSTOM_COLORS.length]; }
+function avg(a) { return a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0; }
+/* Ampel für einen Bericht */
+function evalReport(r) {
+  const red = [], yel = [];
+  const tr = r.d.filter(x => x.type !== 'befinden');
+  const pains = r.d.map(x => x.pain).concat(r.cp.flatMap(c => c.h.map(h => h.v)));
+  const maxP = pains.length ? Math.max(...pains) : 0;
+  if (maxP > 5) red.push('Schmerz bis ' + maxP + '/10'); else if (maxP >= 4) yel.push('Schmerz bis ' + maxP + '/10');
+  const act = r.cp.filter(c => !c.healed); if (act.length) yel.push('Beschwerde aktiv: ' + act.map(c => c.name).join(', '));
+  const en = r.d.filter(x => x.ei || x.ed).map(x => x.ei || x.ed);
+  if (en.length >= 3 && en.slice(-3).every(v => v <= 2)) red.push('3 × in Folge wenig Energie');
+  else if (en.length && avg(en) <= 2) yel.push('Energie im Schnitt ' + avg(en).toFixed(1).replace('.', ',') + '/4');
+  const sl = r.d.filter(x => x.sl).map(x => x.sl); if (sl.length >= 2 && avg(sl) <= 2) yel.push('Schlaf im Schnitt ' + avg(sl).toFixed(1).replace('.', ',') + '/4');
+  const w = r.wl; if (w.length === 5 && w.slice(0, 4).filter(x => x > 0).length >= 2) { const prev = w.slice(0, 4).filter(x => x > 0); const a = avg(prev), cur = w[4];
+    if (a > 0 && cur > 1.5 * a && cur > 600) red.push('Belastung diese Woche ' + Math.round(cur / a * 100) + ' % vom Schnitt');
+    else if (a > 0 && cur > 1.3 * a && cur > 600) yel.push('Belastung steigt (' + Math.round(cur / a * 100) + ' %)'); }
+  if (!tr.length) yel.push('keine Trainingseinheiten eingetragen');
+  return { lvl: red.length ? 'rot' : yel.length ? 'gelb' : 'gruen', reasons: red.concat(yel) };
+}
+const AMPEL = { rot: { c: 'var(--accent)', t: 'Rot' }, gelb: { c: '#d97706', t: 'Gelb' }, gruen: { c: 'var(--ok)', t: 'Grün' } };
+function purgeKader() { const lim = addDays(today(), -183); let n = 0; S.kader.forEach(a => { const b = a.reports.length; a.reports = a.reports.filter(r => r.to >= lim); n += b - a.reports.length; }); S.kader = S.kader.filter(a => a.reports.length); if (n) save(); }
+/* ---------- Schüler: Bericht erstellen ---------- */
+async function viewReport() {
+  setTitle('Bericht an Trainer', true);
+  const st = viewReport.st || (viewReport.st = { days: 7, well: true, tests: true, notes: false });
+  const r = buildReport(st.days, st);
+  const tr = r.d.filter(x => x.type !== 'befinden');
+  const v = V(`<p class="small muted" style="margin-top:6px">Du entscheidest, ob und wann dein Trainer deinen Bericht bekommt. Übertragen wird nur, was unten aufgeführt ist – ohne deinen Namen, nur mit deinem Kürzel.</p>
+    <label class="f" for="rk">Dein Kürzel</label><div class="row"><input id="rk" maxlength="6" value="${esc(S.profile.kuerzel || '')}" placeholder="z. B. MB"><button class="btn btn-sm" id="rkOk">Übernehmen</button></div>
+    <label class="f">Zeitraum</label><div class="chips">${[7, 14, 28].map(n => `<button class="chip ${st.days === n ? 'on' : ''}" data-days="${n}">letzte ${n} Tage</button>`).join('')}</div>
+    <div class="card small"><b>Was wird übertragen?</b>
+      <label class="row" style="margin-top:8px"><input type="checkbox" style="width:auto" checked disabled> <span>Einheiten mit Art, Dauer, Anstrengung (${tr.length}) und Wochenbelastung</span></label>
+      <label class="row"><input type="checkbox" id="oWell" style="width:auto" ${st.well ? 'checked' : ''}> <span>Befinden &amp; Beschwerden (Schlaf, Energie, Muskelkater, Schmerzwerte)</span></label>
+      <label class="row"><input type="checkbox" id="oTests" style="width:auto" ${st.tests ? 'checked' : ''}> <span>Athletik-Tests im Zeitraum (${r.t.length || S.tests.filter(x => x.date >= r.from).length})</span></label>
+      <label class="row"><input type="checkbox" id="oNotes" style="width:auto" ${st.notes ? 'checked' : ''}> <span>Meine Notizen (${S.log.filter(l => l.note && l.date >= r.from).length})</span></label>
+      <p class="tiny" style="margin-top:6px">Immer dabei: geplante Wettkämpfe und Ergebnisse im Zeitraum (${r.ev.length}). Nicht dabei: Name, Pläne, Übungsdetails.</p></div>
+    ${S.profile.kuerzel ? `<div class="qr-box" id="qr"></div><p style="text-align:center" class="small" id="pi"></p>
+      <div class="btns" id="qnav" hidden><button class="btn" id="prev">◀</button><button class="btn" id="auto">⏸ Pause</button><button class="btn" id="next">▶</button></div>
+      <p class="small muted" style="text-align:center">Dein Trainer scannt den Code mit seiner App (Trainer-Modus).</p>
+      <button class="btn btn-block" id="rShare">📨 Als Text-Code verschicken (Messenger, E-Mail)</button>` : '<div class="card warn small">Bitte zuerst ein Kürzel eingeben und übernehmen.</div>'}`);
+  $('#rkOk', v).onclick = () => { const k = $('#rk', v).value.trim().toUpperCase(); if (!k) return toast('Bitte ein Kürzel eingeben.'); S.profile.kuerzel = k; save(); route(); };
+  $$('[data-days]', v).forEach(b => b.onclick = () => { st.days = +b.dataset.days; route(); });
+  [['oWell', 'well'], ['oTests', 'tests'], ['oNotes', 'notes']].forEach(([id, k]) => { $('#' + id, v).onchange = e => { st[k] = e.target.checked; route(); }; });
+  if (!S.profile.kuerzel) return;
+  const token = location.hash; const enc = await encodeObj(r); if (location.hash !== token) return;
+  const parts = chunksFor(enc); let cur = 0;
+  const show = () => { $('#qr', v).innerHTML = qrSvg(parts[cur]); $('#pi', v).textContent = parts.length > 1 ? `Code ${cur + 1} von ${parts.length}` : `Bericht ${S.profile.kuerzel} · ${fmtDate(r.from)} – ${fmtDate(r.to)}`; };
+  show();
+  if (parts.length > 1) {
+    $('#qnav', v).hidden = false; const auto = () => { stopShareCycle(); shareCycle = setInterval(() => { cur = (cur + 1) % parts.length; show(); }, 2000); }; auto();
+    $('#prev', v).onclick = () => { stopShareCycle(); $('#auto', v).textContent = '▶ Auto'; cur = (cur - 1 + parts.length) % parts.length; show(); };
+    $('#next', v).onclick = () => { stopShareCycle(); $('#auto', v).textContent = '▶ Auto'; cur = (cur + 1) % parts.length; show(); };
+    $('#auto', v).onclick = () => { if (shareCycle) { stopShareCycle(); $('#auto', v).textContent = '▶ Auto'; } else { auto(); $('#auto', v).textContent = '⏸ Pause'; } };
+  }
+  $('#rShare', v).onclick = async () => {
+    const code = `${enc.ver}:1/1:BERICHT:${enc.data}`;
+    if (navigator.share) { try { await navigator.share({ title: 'Wochenbericht ' + S.profile.kuerzel, text: code }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+    copyText(code, 'Code kopiert – im Messenger einfügen und an den Trainer schicken');
+  };
+}
+/* ---------- Trainer: Bericht empfangen ---------- */
+function receiveReport(r) {
+  const ev = evalReport(r);
+  openModal(`<h3>Wochenbericht empfangen 📥</h3>
+    <div class="card"><div class="row"><span class="dot" style="background:${AMPEL[ev.lvl].c};width:14px;height:14px"></span><b class="grow">${esc(r.who)}</b>${sportBadge(r.sp)}</div>
+      <p class="small muted">${fmtDate(r.from)} – ${fmtDate(r.to)} · ${r.d.filter(x => x.type !== 'befinden').length} Einheiten</p>
+      ${ev.reasons.length ? `<ul class="cue small">${ev.reasons.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<p class="small">Keine Auffälligkeiten.</p>'}</div>
+    ${S.profile.trainer ? '' : '<div class="card warn small">Der Trainer-Modus ist auf diesem Gerät noch aus. Beim Speichern wird er eingeschaltet.</div>'}
+    <p class="tiny">Die Daten werden nur auf diesem Gerät gespeichert und nach 6 Monaten automatisch gelöscht.</p>
+    <div class="btns"><button class="btn" id="rrX">Verwerfen</button><button class="btn btn-primary" id="rrS">Im Kader speichern</button></div>`, sh => {
+    $('#rrX', sh).onclick = () => { closeModal(); route(); };
+    $('#rrS', sh).onclick = () => {
+      S.profile.trainer = true;
+      let a = S.kader.find(x => x.rid === r.rid); if (!a) { a = { rid: r.rid, who: r.who, sp: r.sp, reports: [] }; S.kader.push(a); }
+      a.who = r.who; a.sp = r.sp; r.recv = today();
+      a.reports = a.reports.filter(x => !(x.from === r.from && x.to === r.to)); a.reports.push(r); a.reports.sort((x, y) => y.to.localeCompare(x.to) || y.from.localeCompare(x.from)); a.reports = a.reports.slice(0, 12);
+      save(); closeModal(); toast('Bericht von ' + r.who + ' gespeichert'); go('#athlet-' + a.rid);
+    };
+  });
+}
+function viewKader() {
+  setTitle('Kader', true); purgeKader();
+  const rows = S.kader.map(a => ({ a, r: a.reports[0], ev: evalReport(a.reports[0]) })).sort((x, y) => ['rot', 'gelb', 'gruen'].indexOf(x.ev.lvl) - ['rot', 'gelb', 'gruen'].indexOf(y.ev.lvl) || x.a.who.localeCompare(y.a.who));
+  const cnt = k => rows.filter(x => x.ev.lvl === k).length;
+  const v = V(`<div class="stats" style="margin-top:6px">${['rot', 'gelb', 'gruen'].map(k => `<div class="stat"><b style="color:${AMPEL[k].c}">${cnt(k)}</b><span>${AMPEL[k].t}</span></div>`).join('')}</div>
+    <a class="btn btn-dark btn-block" href="#scan">▣ Wochenbericht scannen</a>
+    <h2>Athleten</h2>
+    ${rows.map(({ a, r, ev }) => { const old = daysUntil(r.to) < -10;
+      return `<a class="item" href="#athlet-${a.rid}"><span class="dot" style="background:${AMPEL[ev.lvl].c};width:14px;height:14px"></span><div class="grow"><div class="t">${esc(a.who)} ${SPORTS[a.sp] ? SPORTS[a.sp].icon : ''}${old ? ' <span class="badge">veraltet</span>' : ''}</div>
+        <div class="s">${fmtDate(r.from)} – ${fmtDate(r.to)} · ${r.d.filter(x => x.type !== 'befinden').length} Einheiten</div>${ev.reasons.length ? `<div class="s">${esc(ev.reasons.slice(0, 2).join(' · '))}</div>` : ''}</div>${CHEV}</a>`; }).join('') || '<div class="empty"><div class="big">👥</div><p>Noch keine Berichte. Schüler öffnen in ihrer App Tagebuch → „Bericht an Trainer“, du scannst den Code.</p></div>'}
+    <div class="card small" style="margin-top:14px"><b>Ampel:</b> Rot bei Schmerz über 5, dreimal in Folge wenig Energie oder Belastungssprung über 150 %. Gelb bei Schmerz 4–5, aktiver Beschwerde, wenig Schlaf oder Energie, Belastung über 130 % oder ohne Einheiten. Die Ampel ist ein Gesprächsanlass, keine Diagnose.</div>
+    <p class="tiny">Kaderdaten liegen nur auf diesem Gerät und werden nach 6 Monaten automatisch gelöscht.</p>
+    ${S.kader.length ? '<button class="btn btn-danger btn-block" id="kDel">Alle Kaderdaten löschen</button>' : ''}`);
+  if ($('#kDel', v)) $('#kDel', v).onclick = async () => { if (!await confirmBox('Alle Berichte aller Athleten löschen?', 'Löschen', true)) return; S.kader = []; save(); route(); };
+}
+function viewAthlete(rid) {
+  const a = S.kader.find(x => x.rid === rid); if (!a) return go('#kader');
+  setTitle('Athlet ' + a.who, true);
+  const r = a.reports[0], ev = evalReport(r); const tr = r.d.filter(x => x.type !== 'befinden');
+  const g = {}; tr.forEach(x => { g[x.type] = g[x.type] || { n: 0, min: 0 }; g[x.type].n++; g[x.type].min += x.dur; });
+  const rowsT = Object.entries(g).sort((x, y) => y[1].n - x[1].n);
+  const max = Math.max(1, ...r.wl); const wkLbl = i => { const k = weekKey(r.to); return new Date(addDays(k, -7 * (4 - i)) + 'T12:00:00').toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' }); };
+  const sl = r.d.filter(x => x.sl).map(x => x.sl), en = r.d.filter(x => x.ei || x.ed).map(x => x.ei || x.ed);
+  const extras = tr.reduce((o, x) => { o.km += x.km; o.sm += x.spielmin; o.m += x.matches; return o; }, { km: 0, sm: 0, m: 0 });
+  const v = V(`<div class="card"><div class="row"><span class="dot" style="background:${AMPEL[ev.lvl].c};width:16px;height:16px"></span><h3 class="grow">${esc(a.who)} · Ampel ${AMPEL[ev.lvl].t}</h3>${sportBadge(a.sp)}</div>
+      <p class="small muted">Bericht ${fmtDate(r.from)} – ${fmtDate(r.to)}, empfangen ${fmtDate(r.recv || r.to)}</p>
+      ${ev.reasons.length ? `<ul class="cue small">${ev.reasons.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '<p class="small">Keine Auffälligkeiten.</p>'}</div>
+    <div class="stats"><div class="stat"><b>${tr.length}</b><span>Einheiten</span></div><div class="stat"><b>${tr.reduce((s, x) => s + x.dur, 0)}</b><span>Minuten</span></div><div class="stat"><b>${tr.reduce((s, x) => s + x.dur * x.rpe, 0)}</b><span>Belastung</span></div></div>
+    <div class="card"><div class="row"><h3 class="grow">Belastung pro Woche</h3><span class="tiny">RPE × Minuten</span></div>
+      <div class="bars">${r.wl.map((x, i) => `<div class="bar ${i === 4 ? 'cur' : ''}"><span>${x || ''}</span><i style="height:${x / max * 80}%"></i><span>${wkLbl(i)}</span></div>`).join('')}</div></div>
+    ${rowsT.length ? `<div class="card"><h3>Verteilung der Einheiten</h3><div class="stack">${rowsT.map(([k, x]) => `<i style="background:${rTypeColor(k)};width:${x.n / tr.length * 100}%"></i>`).join('')}</div>
+      ${rowsT.map(([k, x]) => `<div class="row small dist-r"><span class="dot" style="background:${rTypeColor(k)}"></span><span class="grow">${esc(rTypeName(k).replace(/^\S+\s/, ''))}</span><b>${x.n} ×</b><span class="muted">${x.min} min</span></div>`).join('')}
+      ${extras.km || extras.sm || extras.m ? `<p class="tiny">${[extras.km ? (Math.round(extras.km * 10) / 10 + ' km im Wasser').replace('.', ',') : '', extras.sm ? extras.sm + ' Spielminuten' : '', extras.m ? extras.m + ' Matches' : ''].filter(Boolean).join(' · ')}</p>` : ''}</div>` : ''}
+    ${sl.length || en.length || r.d.some(x => x.mk) ? `<div class="card small"><h3>Befinden</h3>${sl.length ? `<p>Schlaf Ø <b>${avg(sl).toFixed(1).replace('.', ',')}</b>/4 (${sl.length} Angaben)</p>` : ''}${en.length ? `<p>Energie Ø <b>${avg(en).toFixed(1).replace('.', ',')}</b>/4 · Verlauf: ${en.join(' → ')}</p>` : ''}${r.d.some(x => x.mk === 1) ? `<p>Muskelkater an ${r.d.filter(x => x.mk === 1).length} Tagen</p>` : ''}</div>` : ''}
+    ${r.cp.length ? `<div class="card"><h3>Beschwerden</h3>${r.cp.map(c => `<p class="small"><b>${esc(c.name)}</b> · seit ${fmtDate(c.start)}${c.healed ? ' · verheilt ' + fmtDate(c.healed) : ' · <span style="color:var(--warn)">aktiv</span>'}</p>${sparkline(c.h.map(h => h.v))}${c.h.length ? `<p class="tiny">${c.h.map(h => `${fmtDate(h.date)}: ${h.v}`).join(' · ')}</p>` : ''}`).join('')}</div>` : ''}
+    ${r.t.length ? `<div class="card small"><h3>Athletik-Tests</h3>${r.t.map(x => { const T = TESTS.find(y => y.id === x.t); return `<p>${esc(T.n)}: <b>${String(x.v).replace('.', ',')} ${esc(T.u)}</b> (${fmtDate(x.date)})</p>`; }).join('')}</div>` : ''}
+    ${r.ev.length ? `<div class="card small"><h3>Wettkämpfe</h3>${r.ev.map(e => `<p>🏆 ${fmtDate(e.date)} · <b>${esc(e.name)}</b> · ${PRIO[e.prio]}${e.place ? ' · Platz ' + esc(e.place) : ''}${e.score ? ' · ' + esc(e.score) : ''}</p>`).join('')}</div>` : ''}
+    ${r.n.length ? `<div class="card small"><h3>Notizen</h3>${r.n.map(x => `<p><b>${fmtDate(x.date)}:</b> ${esc(x.text)}</p>`).join('')}</div>` : ''}
+    <div class="card small"><h3>Einträge im Zeitraum</h3>${r.d.map(x => `<div class="row dist-r"><span class="dot" style="background:${rTypeColor(x.type)}"></span><span class="grow">${fmtDate(x.date)} · ${esc(rTypeName(x.type).replace(/^\S+\s/, ''))}</span><span class="muted">${x.type === 'befinden' ? '' : x.dur + ' min · RPE ' + x.rpe}${x.pain ? ' · Schmerz ' + x.pain : ''}</span></div>`).join('') || '<p class="muted">Keine Einträge.</p>'}</div>
+    ${a.reports.length > 1 ? `<div class="card small"><h3>Frühere Berichte</h3>${a.reports.slice(1).map(x => { const e = evalReport(x); return `<p><span class="dot" style="display:inline-block;background:${AMPEL[e.lvl].c}"></span> ${fmtDate(x.from)} – ${fmtDate(x.to)} · ${x.d.filter(y => y.type !== 'befinden').length} Einheiten · Belastung ${x.d.reduce((s, y) => s + y.dur * y.rpe, 0)}</p>`; }).join('')}</div>` : ''}
+    <div class="btns"><a class="btn btn-dark" href="#plans">📋 Plan anpassen &amp; teilen</a><button class="btn btn-danger" id="aDel">Athlet löschen</button></div>`);
+  $('#aDel', v).onclick = async () => { if (!await confirmBox(`Alle Berichte von ${a.who} löschen?`, 'Löschen', true)) return; S.kader = S.kader.filter(x => x.rid !== rid); save(); go('#kader'); };
+}
 
 /* ================= Update ================= */
 function verNum(v) { return String(v).split('.').map(n => parseInt(n) || 0).reduce((a, n, i) => a + n / Math.pow(1000, i), 0); }
