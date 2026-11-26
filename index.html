@@ -164,7 +164,7 @@ textarea { min-height: 80px; resize: vertical; }
 .wo-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; margin: 12px 0; }
 .wo-card.done { border-color: var(--ok); }
 .wo-target { font-size: .85rem; color: var(--ink2); margin: 2px 0 8px; }
-.sets { display: grid; grid-template-columns: 28px 1fr 1fr 48px; gap: 6px; align-items: center; }
+.sets { display: grid; grid-template-columns: 34px 1fr 1fr 48px; gap: 6px; align-items: center; }
 .sets .h { font-size: .7rem; color: var(--ink3); font-weight: 700; text-transform: uppercase; }
 .sets input { padding: 8px; text-align: center; font-variant-numeric: tabular-nums; }
 .chk { width: 44px; height: 40px; border-radius: 10px; border: 2px solid var(--line); background: var(--card); cursor: pointer;
@@ -242,6 +242,10 @@ details.wb { margin-top: 12px; } details.wb summary { cursor: pointer; }
 .stack { display: flex; height: 14px; border-radius: 99px; overflow: hidden; margin: 8px 0 6px; background: var(--line); }
 .stack i { display: block; height: 100%; }
 .dist-r { padding: 3px 0; }
+
+.sets.one { grid-template-columns: 34px 1fr 48px; }
+.sets .h { font-size: .66rem; letter-spacing: .02em; }
+.cp-row select { width: 150px; }
 
 </style>
 </head>
@@ -13342,7 +13346,7 @@ function wellnessHtml(mode) {
     <div class="card warn small" id="painHint" hidden>Schmerz über 5: Training an dieser Stelle nicht fortsetzen und deiner Lehrkraft bzw. deinem Trainer Bescheid sagen.</div>`;
 }
 function cpRow(c) {
-  return `<div class="row cp-row"><span class="grow small"><b>${esc(c.name)}</b></span><select data-cp="${c.id}" aria-label="Schmerz ${esc(c.name)}"><option value="">–</option>${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<option value="${n}">${n}</option>`).join('')}</select></div>`;
+  return `<div class="row cp-row"><span class="grow small"><b>${esc(c.name)}</b></span><select data-cp="${c.id}" aria-label="Schmerz ${esc(c.name)}"><option value="">nicht gespürt</option>${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<option value="${n}">${n}${n === 0 ? ' – kein Schmerz' : n === 3 ? ' – leicht' : n === 5 ? ' – mittel' : n === 7 ? ' – stark' : n === 10 ? ' – unerträglich' : ''}</option>`).join('')}</select></div>`;
 }
 /* verbindet die Bedienelemente und liefert eine Funktion, die die Werte ausliest */
 function bindWellness(sh) {
@@ -13582,7 +13586,7 @@ function renderEdit() {
           <button class="btn btn-sm btn-danger" data-rm="${di}.${k}" aria-label="entfernen">✕</button></div>
         <div class="ed-grid">
           <div><div class="mini-l">Sätze</div><input data-f="sets" data-k="${di}.${k}" type="number" min="1" max="20" inputmode="numeric" value="${esc(it.sets)}"></div>
-          <div><div class="mini-l">Wdh. / Dauer</div><input data-f="reps" data-k="${di}.${k}" maxlength="24" value="${esc(it.reps)}"></div>
+          <div><div class="mini-l">Wdh. / Dauer</div><input data-f="reps" data-k="${di}.${k}" maxlength="24" value="${esc(it.reps)}" placeholder="10 · 8–12 · 30 s · 5 min"></div>
           <div><div class="mini-l">Pause s</div><input data-f="rest" data-k="${di}.${k}" type="number" min="0" max="600" inputmode="numeric" value="${esc(it.rest)}"></div>
         </div>
         <div class="ed-grid2">
@@ -13720,7 +13724,7 @@ function exerciseHistory(id) {
     const it = (l.items || []).find(i => i.ex === id); if (!it) continue;
     const sets = it.sets.filter(s => s.done);
     if (!sets.length) continue;
-    out.push({ date: l.date, sets, txt: sets.map(s => (s.r || '–') + (s.kg ? ' × ' + s.kg + ' kg' : '')).join(' | ') });
+    const e = ex(id); out.push({ date: l.date, sets, txt: sets.map(s => setText(e, { reps: (l.items.find(i => i.ex === id).target || {}).reps || '' }, s)).join(' | ') });
   }
   return out;
 }
@@ -13736,9 +13740,25 @@ async function startWorkout(planId, dayIdx) {
     items: d.i.map(it => {
       const h = exerciseHistory(it.ex)[0]; let n = parseInt(it.sets) || 1; if (dl) n = Math.max(1, Math.ceil(n / 2));
       const repGuess = String(it.reps).match(/^\d+/) ? String(it.reps).match(/^\d+/)[0] : '';
-      return { ex: it.ex, target: it, sets: Array.from({ length: n }, (_, k) => ({ r: h && h.sets[k] ? h.sets[k].r : repGuess, kg: h && h.sets[k] ? h.sets[k].kg : '', done: false })) };
+      return { ex: it.ex, target: it, sets: Array.from({ length: n }, (_, k) => ({ r: h && h.sets[k] ? h.sets[k].r : repGuess, kg: h && h.sets[k] ? h.sets[k].kg || '' : '', pn: '', done: false })) };
     }) };
   save(); go('#workout');
+}
+/* Welche Eingaben passen zu dieser Übung? a = erste Spalte (Wdh./Sekunden/Minuten), b = zweite Spalte (kg, Schmerz) oder keine */
+function exMeasure(e, t) {
+  const reps = String(t.reps || ''), name = String(e.n || ''), load = String(t.load || '');
+  const isMin = /\bmin\b/i.test(reps), timed = isTimed(reps);
+  const side = /bein/i.test(reps) ? ' je Bein' : /arm/i.test(reps) ? ' je Arm' : /seite/i.test(reps) ? ' je Seite' : '';
+  const a = timed ? { h: (isMin ? 'Minuten' : 'Sekunden') + side, ph: isMin ? 'min' : 's', unit: isMin ? ' min' : ' s' }
+    : { h: side ? 'Wdh.' + side : 'Wiederholungen', ph: 'Anzahl', unit: '' };
+  if (/schmerz/i.test(name)) return { a, b: { key: 'pn', h: 'Schmerz 0–10', ph: '0–10', max: 10 } };
+  const weighted = /hantel|kettlebell|gewicht|rucksack|medizinball|zusatzlast/i.test(String(e.eq || '') + ' ' + load) || /\bkg\b/i.test(load);
+  if (weighted) return { a, b: { key: 'kg', h: /medizinball/i.test(String(e.eq || '')) ? 'Ball (kg)' : 'Gewicht (kg)', ph: 'kg', max: 300 } };
+  return { a, b: null };
+}
+function setText(e, t, st) {
+  const m = exMeasure(e, t);
+  return (st.r ? st.r + m.a.unit : '–') + (st.kg ? ' × ' + st.kg + ' kg' : '') + (st.pn !== undefined && st.pn !== '' ? ' · Schmerz ' + st.pn : '');
 }
 function isTimed(reps) { return /\b(s|min|sek)\b/i.test(String(reps)); }
 function timedSeconds(reps) {
@@ -13752,18 +13772,19 @@ function viewWorkout() {
   const v = V(`
     <div class="row" style="margin-top:4px"><div class="grow"><div class="progress"><i style="width:${total ? done / total * 100 : 0}%"></i></div></div><span class="small"><b>${done}/${total}</b> Sätze</span></div>
     ${w.deload ? '<div class="card tip small"><b>Deload-Woche:</b> Sätze sind halbiert. Bleib bei moderater Intensität – Erholung macht stark.</div>' : ''}
-    ${w.items.map((it, i) => { const e = ex(it.ex); const t = it.target; const last = exerciseHistory(it.ex)[0]; const allDone = it.sets.every(s => s.done);
+    ${w.items.map((it, i) => { const e = ex(it.ex); const t = it.target; const last = exerciseHistory(it.ex)[0]; const allDone = it.sets.every(s => s.done); const m = exMeasure(e, t);
       return `<div class="wo-card ${allDone ? 'done' : ''}" id="wc${i}">
         <div class="row">${catDot(e.cat)}<a class="grow" href="#ex-${rid(it.ex)}" style="text-decoration:none"><b>${esc(e.n)}</b> <span class="tiny">ⓘ</span></a>${allDone ? '<span class="badge ok">✓</span>' : ''}</div>
         <div class="wo-target">Ziel: ${esc(t.sets)} × ${esc(t.reps)}${t.rest ? ' · Pause ' + esc(t.rest) + ' s' : ''}${t.load ? ' · ' + esc(t.load) : ''}${t.note ? '<br>' + esc(t.note) : ''}</div>
         ${last ? `<div class="last">Letztes Mal (${fmtDate(last.date)}): ${esc(last.txt)}</div>` : ''}
         ${isTimed(t.reps) ? `<button class="btn btn-sm" data-timer="${i}" style="margin-bottom:8px">⏱ ${fmtSec(timedSeconds(t.reps))} Timer</button>` : ''}
-        <div class="sets"><span class="h">#</span><span class="h">${isTimed(t.reps) ? 'Dauer/Wdh.' : 'Wdh.'}</span><span class="h">kg</span><span></span>
+        <div class="sets ${m.b ? '' : 'one'}"><span class="h">Satz</span><span class="h">${m.a.h}</span>${m.b ? `<span class="h">${m.b.h}</span>` : ''}<span class="h" style="text-align:center">fertig</span>
           ${it.sets.map((s, k) => `<span class="small muted">${k + 1}</span>
-            <input inputmode="decimal" data-r="${i}.${k}" value="${esc(s.r)}" aria-label="Wiederholungen Satz ${k + 1}">
-            <input inputmode="decimal" data-kg="${i}.${k}" value="${esc(s.kg)}" placeholder="–" aria-label="Gewicht Satz ${k + 1}">
+            <input inputmode="decimal" data-r="${i}.${k}" value="${esc(s.r)}" placeholder="${m.a.ph}" aria-label="${m.a.h} Satz ${k + 1}">
+            ${m.b ? `<input inputmode="decimal" data-${m.b.key}="${i}.${k}" value="${esc(m.b.key === 'pn' ? (s.pn ?? '') : s.kg)}" placeholder="${m.b.ph}" aria-label="${m.b.h} Satz ${k + 1}">` : ''}
             <button class="chk ${s.done ? 'on' : ''}" data-done="${i}.${k}" aria-label="Satz ${k + 1} erledigt">✓</button>`).join('')}
         </div>
+        ${m.b && m.b.key === 'pn' ? '<p class="tiny" style="margin-top:4px">Schmerz an der betroffenen Stelle: 0 = keiner, 10 = stärkster. 0–3 grün · 4–5 gelb · über 5 rot.</p>' : ''}
         <div class="row" style="margin-top:6px"><button class="btn btn-sm" data-addset="${i}">＋ Satz</button>${it.sets.length > 1 ? `<button class="btn btn-sm" data-rmset="${i}">− Satz</button>` : ''}</div>
       </div>`; }).join('')}
     <button class="btn btn-block" id="addEx">＋ Übung ergänzen</button>
@@ -13773,7 +13794,9 @@ function viewWorkout() {
   const k2 = s => s.split('.').map(Number);
   v.addEventListener('input', e => {
     const t = e.target; if (t.dataset.r) { const [a, b] = k2(t.dataset.r); w.items[a].sets[b].r = t.value; }
-    if (t.dataset.kg) { const [a, b] = k2(t.dataset.kg); w.items[a].sets[b].kg = t.value; } save();
+    if (t.dataset.kg) { const [a, b] = k2(t.dataset.kg); w.items[a].sets[b].kg = t.value; }
+    if (t.dataset.pn) { const [a, b] = k2(t.dataset.pn); const n = parseInt(t.value); const v = t.value === '' || isNaN(n) ? '' : String(Math.min(10, Math.max(0, n)));
+      w.items[a].sets[b].pn = v; if (t.value !== v) { t.value = v; if (n > 10) toast('Schmerz geht nur bis 10'); } } save();
   });
   $$('[data-done]', v).forEach(b => b.onclick = () => {
     const [a, k] = k2(b.dataset.done); const s = w.items[a].sets[k]; s.done = !s.done; save();
@@ -13807,7 +13830,7 @@ function finishWorkout() {
       const p = S.plans.find(x => x.id === w.planId);
       S.log.unshift({ id: uid(), ts: Date.now(), date: today(), type: 'app', planId: w.planId, dayIdx: w.dayIdx, title: w.title, plan: p ? p.name : '',
         dur: Math.max(1, parseInt($('#fd', sh).value) || mins), rpe, ...readW(), note: $('#fn', sh).value.trim(),
-        items: w.items.map(i => ({ ex: i.ex, sets: i.sets })) });
+        items: w.items.map(i => ({ ex: i.ex, target: { reps: i.target.reps }, sets: i.sets })) });
       S.wip = null; save(); stopRest(); closeModal(); toast('💪 Stark! Training gespeichert.'); go('#log');
     };
   });
