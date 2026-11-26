@@ -215,6 +215,15 @@ textarea { min-height: 80px; resize: vertical; }
 .empty .big { font-size: 2.6rem; }
 .inline-logo { width: 100%; max-width: 280px; display: block; margin: 0 auto; filter: var(--logo-filter); }
 
+/* Paket 1: Befinden */
+.scale { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.scale.two { grid-template-columns: 1fr 1fr; }
+.scale button { padding: 9px 0; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font: inherit; font-weight: 800; cursor: pointer; }
+.scale button.on { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.scale-l { min-height: 1.2em; margin: 2px 0 0; }
+details.wb { margin-top: 12px; } details.wb summary { cursor: pointer; }
+.cp-row { padding: 4px 0; } .cp-row select { width: 76px; padding: 6px 8px; }
+
 </style>
 </head>
 <body>
@@ -13141,7 +13150,7 @@ const CHEV = '<svg class="chev" viewBox="0 0 24 24" width="20" height="20"><path
 const KEY = 'avg-leistungsteam-v1';
 function blank() {
   return { v: 1, profile: { name: '', sport: '', level: 'einsteiger', onboarded: false },
-    plans: [], customEx: [], log: [], tests: [], activePlan: null, wip: null, tip: 0 };
+    plans: [], customEx: [], log: [], tests: [], complaints: [], lastBackup: null, activePlan: null, wip: null, tip: 0 };
 }
 let S = (() => {
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v === 1) return Object.assign(blank(), s); } catch (e) { /* leer */ }
@@ -13199,7 +13208,7 @@ function go(h) { if (location.hash === h) route(); else location.hash = h; }
 const ROUTES = {
   home: viewHome, plans: viewPlans, plan: viewPlan, edit: viewEdit, templates: viewTemplates,
   lib: viewLib, ex: viewEx, log: viewLog, tests: viewTests, more: viewMore,
-  scan: viewScan, share: viewShare, workout: viewWorkout, onboard: viewOnboard, safety: viewSafety, profile: viewProfile
+  scan: viewScan, share: viewShare, workout: viewWorkout, onboard: viewOnboard, safety: viewSafety, profile: viewProfile, beschwerden: viewComplaints
 };
 let pendingImport = null;
 function route() {
@@ -13216,7 +13225,7 @@ function route() {
   fn(arg);
   window.scrollTo(0, 0);
 }
-function tabOf(n) { return { plan: 'plans', edit: 'plans', templates: 'plans', share: 'plans', ex: 'lib', tests: 'more', safety: 'more', profile: 'more' }[n] || n; }
+function tabOf(n) { return { plan: 'plans', edit: 'plans', templates: 'plans', share: 'plans', ex: 'lib', tests: 'more', safety: 'more', profile: 'more', beschwerden: 'log' }[n] || n; }
 window.addEventListener('hashchange', route);
 
 function V(html) { $('#view').innerHTML = html; return $('#view'); }
@@ -13269,7 +13278,7 @@ function weekLoads(n = 8) {
   const out = []; const now = new Date(); const mon = new Date(weekKey(today()) + 'T12:00:00');
   for (let i = n - 1; i >= 0; i--) {
     const k = new Date(mon); k.setDate(mon.getDate() - 7 * i); const key = k.toISOString().slice(0, 10);
-    const entries = S.log.filter(l => weekKey(l.date) === key);
+    const entries = S.log.filter(l => weekKey(l.date) === key && l.type !== 'befinden');
     out.push({ key, load: entries.reduce((a, l) => a + (l.rpe || 0) * (l.dur || 0), 0), count: entries.length, min: entries.reduce((a, l) => a + (l.dur || 0), 0) });
   }
   void now; return out;
@@ -13290,12 +13299,127 @@ function nextDayIdx(plan) {
   return last ? (last.dayIdx + 1) % plan.days.length : 0;
 }
 
+/* ================= Befinden & Beschwerden (Paket 1) ================= */
+const SLEEP_L = ['', 'sehr schlecht', 'eher schlecht', 'gut', 'sehr gut'];
+const EN_IN_L = ['', 'kaum Energie', 'wenig Energie', 'gute Energie', 'volle Energie'];
+const EN_OUT_L = ['', 'total platt', 'ziemlich müde', 'okay', 'noch viel Power'];
+const EN_DAY_L = ['', 'kaum Energie', 'wenig Energie', 'gute Energie', 'volle Energie'];
+const LABELS = { sl: SLEEP_L, ei: EN_IN_L, eo: EN_OUT_L, ed: EN_DAY_L };
+function activeComplaints() { return S.complaints.filter(c => !c.healed); }
+function complaintById(id) { return S.complaints.find(c => c.id === id); }
+function scaleHtml(key, title, cur) {
+  return `<label class="f">${title}</label><div class="scale" data-scale="${key}">${[1, 2, 3, 4].map(n => `<button type="button" data-v="${n}" class="${cur === n ? 'on' : ''}">${n}</button>`).join('')}</div>
+    <p class="tiny scale-l" data-scale-l="${key}">${cur ? esc(LABELS[key][cur]) : 'optional – antippen zum Auswählen'}</p>`;
+}
+/* Befindens-Block für Trainings- und Pausetag-Einträge. mode: 'training' | 'day' */
+function wellnessHtml(mode) {
+  const act = activeComplaints();
+  return `${scaleHtml('sl', 'Schlaf letzte Nacht', 0)}
+    ${mode === 'training' ? scaleHtml('ei', 'Energie im Training', 0) + scaleHtml('eo', 'Energie direkt nach dem Training', 0) : scaleHtml('ed', 'Energie heute', 0)}
+    <label class="f">Muskelkater</label><div class="scale two" data-toggle="mk"><button type="button" data-v="0">Nein</button><button type="button" data-v="1">Ja</button></div>
+    <label class="f">Beschwerden <span class="tiny">Schmerz 0–10, leer = nicht gespürt</span></label>
+    <div id="cpList">${act.map(c => cpRow(c)).join('') || '<p class="tiny" id="cpNone">Keine aktiven Beschwerden.</p>'}</div>
+    <div class="row" style="margin-top:6px"><input id="cpNew" maxlength="40" placeholder="Neue Beschwerde, z. B. Knie rechts"><button type="button" class="btn btn-sm" id="cpAdd">＋</button></div>
+    <div class="card warn small" id="painHint" hidden>Schmerz über 5: Training an dieser Stelle nicht fortsetzen und deiner Lehrkraft bzw. deinem Trainer Bescheid sagen.</div>`;
+}
+function cpRow(c) {
+  return `<div class="row cp-row"><span class="grow small"><b>${esc(c.name)}</b></span><select data-cp="${c.id}" aria-label="Schmerz ${esc(c.name)}"><option value="">–</option>${[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<option value="${n}">${n}</option>`).join('')}</select></div>`;
+}
+/* verbindet die Bedienelemente und liefert eine Funktion, die die Werte ausliest */
+function bindWellness(sh) {
+  const st = { sl: 0, ei: 0, eo: 0, ed: 0, mk: null };
+  $$('[data-scale]', sh).forEach(g => $$('button', g).forEach(b => b.onclick = () => {
+    const k = g.dataset.scale, v = +b.dataset.v; st[k] = st[k] === v ? 0 : v;
+    $$('button', g).forEach(x => x.classList.toggle('on', +x.dataset.v === st[k]));
+    const l = $(`[data-scale-l="${k}"]`, sh); if (l) l.textContent = st[k] ? LABELS[k][st[k]] : 'optional – antippen zum Auswählen';
+  }));
+  $$('[data-toggle="mk"] button', sh).forEach(b => b.onclick = () => {
+    const v = +b.dataset.v; st.mk = st.mk === v ? null : v; $$('[data-toggle="mk"] button', sh).forEach(x => x.classList.toggle('on', +x.dataset.v === st.mk));
+  });
+  const painCheck = () => { const hi = $$('[data-cp]', sh).some(x => x.value !== '' && +x.value > 5); $('#painHint', sh).hidden = !hi; };
+  $('#cpList', sh).addEventListener('change', painCheck);
+  $('#cpAdd', sh).onclick = () => {
+    const n = $('#cpNew', sh).value.trim(); if (!n) return toast('Bitte die Beschwerde benennen, z. B. „Knie rechts“.');
+    const c = { id: 'b' + uid(), name: n, start: today(), healed: null }; S.complaints.push(c); save();
+    const none = $('#cpNone', sh); if (none) none.remove();
+    $('#cpList', sh).insertAdjacentHTML('beforeend', cpRow(c)); $('#cpNew', sh).value = '';
+  };
+  return () => {
+    const cp = {}; $$('[data-cp]', sh).forEach(x => { if (x.value !== '') cp[x.dataset.cp] = +x.value; });
+    const vals = Object.values(cp); const out = { cp, pain: vals.length ? Math.max(...vals) : 0 };
+    if (st.sl) out.sl = st.sl; if (st.ei) out.ei = st.ei; if (st.eo) out.eo = st.eo; if (st.ed) out.ed = st.ed; if (st.mk !== null) out.mk = !!st.mk;
+    return out;
+  };
+}
+function energyOf(l) { return l.ei || l.ed || 0; }
+const byTimeDesc = (a, b) => b.date.localeCompare(a.date) || (b.ts || 0) - (a.ts || 0);
+/* Hinweis wie bei „Einfach festhalten“: die letzten 3 Einträge mit Energie-Angabe alle bei 1–2 */
+function energyWarning() {
+  const withE = S.log.filter(l => energyOf(l)).sort(byTimeDesc).slice(0, 3);
+  if (withE.length === 3 && withE.every(l => energyOf(l) <= 2))
+    return 'Mögliches Übertraining: Deine letzten drei Einträge zeigen wenig Energie. Gönn dir 1–2 Ruhetage, schlaf ausreichend und sprich mit deiner Lehrkraft, wenn es so bleibt.';
+  return '';
+}
+function complaintHistory(id) { return S.log.filter(l => l.cp && l.cp[id] != null).sort(byTimeDesc).reverse().map(l => ({ date: l.date, v: l.cp[id] })); }
+function befindenLog() {
+  openModal(`<h3>Befinden eintragen</h3><p class="small muted">Für Tage ohne Training. Alles ist freiwillig – so siehst du, ob deine Erholung reicht.</p>
+    <label class="f" for="bdt">Datum</label><input id="bdt" type="date" value="${today()}" max="${today()}">
+    ${wellnessHtml('day')}
+    <label class="f" for="bn">Notiz</label><input id="bn" maxlength="200">
+    <div class="btns"><button class="btn" id="bx">Abbrechen</button><button class="btn btn-primary" id="bs">Speichern</button></div>`, sh => {
+    const read = bindWellness(sh);
+    $('#bx', sh).onclick = closeModal;
+    $('#bs', sh).onclick = () => {
+      const w = read(); if (!w.sl && !w.ed && w.mk == null && !Object.keys(w.cp).length && !$('#bn', sh).value.trim()) return toast('Bitte mindestens einen Wert eintragen.');
+      S.log.push({ id: uid(), ts: Date.now(), date: $('#bdt', sh).value || today(), type: 'befinden', dur: 0, rpe: 0, note: $('#bn', sh).value.trim(), ...w });
+      S.log.sort(byTimeDesc); save(); closeModal(); toast('Befinden gespeichert'); route();
+    };
+  });
+}
+function viewComplaints() {
+  setTitle('Beschwerden', true);
+  const act = activeComplaints(), old = S.complaints.filter(c => c.healed);
+  const card = c => { const h = complaintHistory(c.id), last = h[h.length - 1];
+    return `<div class="card"><div class="row"><h3 class="grow">${esc(c.name)}</h3>${c.healed ? '<span class="badge ok">verheilt</span>' : last ? `<span class="badge ${last.v > 5 ? 'accent' : ''}">zuletzt ${last.v}/10</span>` : ''}</div>
+      <p class="tiny">seit ${fmtDate(c.start)}${c.healed ? ' · verheilt am ' + fmtDate(c.healed) + ' · ' + (Math.round((new Date(c.healed) - new Date(c.start)) / 864e5) + 1) + ' Tage' : ''} · ${h.length} Einträge</p>
+      ${sparkline(h.map(x => x.v))}
+      ${h.length ? `<p class="small muted">${h.slice(-6).reverse().map(x => `${fmtDate(x.date)}: <b>${x.v}</b>`).join(' · ')}</p>` : '<p class="small muted">Noch kein Schmerzwert eingetragen.</p>'}
+      <div class="btns">${c.healed ? `<button class="btn btn-sm" data-reopen="${c.id}">Wieder aktiv</button>` : `<button class="btn btn-sm btn-dark" data-heal="${c.id}">✓ Verheilt</button>`}<button class="btn btn-sm btn-danger" data-del="${c.id}">Löschen</button></div></div>`; };
+  const v = V(`<p class="small muted" style="margin-top:6px">Eine Beschwerde bleibt aktiv, bis du sie als verheilt markierst. So siehst du den Verlauf über die Tage – auch für das Gespräch mit Lehrkraft, Arzt oder Physio.</p>
+    <div class="row"><input id="ncName" maxlength="40" placeholder="Neue Beschwerde, z. B. Achillessehne links"><button class="btn btn-dark" id="ncAdd">＋</button></div>
+    <h2>Aktiv</h2>${act.map(card).join('') || '<p class="muted small">Keine aktiven Beschwerden. 👍</p>'}
+    ${old.length ? `<h2>Verheilt</h2>${old.slice().reverse().map(card).join('')}` : ''}
+    <div class="card warn small">Bei starken oder zunehmenden Schmerzen: Training an dieser Stelle aussetzen und ärztlich abklären lassen.</div>`);
+  $('#ncAdd', v).onclick = () => { const n = $('#ncName', v).value.trim(); if (!n) return toast('Bitte die Beschwerde benennen.'); S.complaints.push({ id: 'b' + uid(), name: n, start: today(), healed: null }); save(); route(); };
+  $$('[data-heal]', v).forEach(b => b.onclick = () => { complaintById(b.dataset.heal).healed = today(); save(); toast('Als verheilt markiert ✓'); route(); });
+  $$('[data-reopen]', v).forEach(b => b.onclick = () => { complaintById(b.dataset.reopen).healed = null; save(); route(); });
+  $$('[data-del]', v).forEach(b => b.onclick = async () => { if (!await confirmBox('Beschwerde löschen? Die Schmerzwerte in den Einträgen bleiben erhalten.', 'Löschen', true)) return; S.complaints = S.complaints.filter(c => c.id !== b.dataset.del); save(); route(); });
+}
+/* ---------- Datensicherung: teilen oder herunterladen, mit Erinnerung ---------- */
+function backupDue() {
+  if (S.log.length < 5) return false;
+  return !S.lastBackup || (new Date(today()) - new Date(S.lastBackup)) / 864e5 >= 30;
+}
+async function doBackup() {
+  const name = `avg-leistungsteam-${today()}.json`; const json = JSON.stringify(S, null, 1);
+  try {
+    const file = new File([json], name, { type: 'application/json' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'AVG Leistungsteam – Datensicherung' });
+      S.lastBackup = today(); save(); toast('Sicherung geteilt ✓'); route(); return;
+    }
+  } catch (e) { if (e && e.name === 'AbortError') return; /* sonst: Download */ }
+  const blob = new Blob([json], { type: 'application/json' }); const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  S.lastBackup = today(); save(); toast('Sicherung gespeichert ✓'); route();
+}
+
 function viewHome() {
   setTitle('Leistungsteam', false);
   const p = S.profile; const plan = S.activePlan && S.plans.find(x => x.id === S.activePlan.id);
   const wk = weekLoads(1)[0]; const sp = SPORTS[p.sport];
   let streak = 0; { const ws = weekLoads(12).reverse(); if (!ws[0].count) ws.shift(); for (const w of ws) { if (w.count) streak++; else break; } }
-  const warn = loadWarning();
+  const warn = loadWarning(), ewarn = energyWarning(), act = activeComplaints();
   const tip = SAFETY_TIPS[S.tip % SAFETY_TIPS.length];
   let planHtml;
   if (S.wip) {
@@ -13323,12 +13447,15 @@ function viewHome() {
       <div class="stat"><b>${streak}</b><span>Wochen in Folge</span></div>
     </div>
     ${warn ? `<div class="card warn small">⚠️ ${esc(warn)}</div>` : ''}
+    ${ewarn ? `<div class="card warn small">🔋 ${esc(ewarn)}</div>` : ''}
+    ${act.length ? `<a class="item" href="#beschwerden"><div class="grow"><div class="t">🩹 Aktive Beschwerden</div><div class="s">${act.map(c => { const h = complaintHistory(c.id), l = h[h.length - 1]; return esc(c.name) + (l ? ' (zuletzt ' + l.v + '/10)' : ''); }).join(' · ')}</div></div>${CHEV}</a>` : ''}
     <div class="grid2">
       <button class="btn" id="qLog">＋ Vereinstraining</button>
+      <button class="btn" id="qBef">🌙 Befinden (Pausetag)</button>
       <a class="btn" href="#tests">⏱ Athletik-Check</a>
       <a class="btn" href="#scan">▣ QR scannen</a>
-      <a class="btn" href="#lib">🔎 Übungen</a>
     </div>
+    ${backupDue() ? `<div class="card row" style="margin-top:14px"><div class="grow"><b>💾 Zeit für eine Datensicherung</b><div class="small muted">${S.lastBackup ? 'Letzte Sicherung am ' + fmtDate(S.lastBackup) : 'Noch keine Sicherung'} – schützt dein Tagebuch beim Handywechsel.</div></div><button class="btn btn-dark btn-sm" id="homeBak">Sichern</button></div>` : ''}
     ${isStandalone() ? '' : `<div class="card row" data-install style="margin-top:14px"><div class="grow"><b>📲 Als App installieren</b><div class="small muted">Vollbild, Start vom Homescreen, auch offline.</div></div><button class="btn btn-primary btn-sm" id="homeInst">Installieren</button></div>`}
     <div class="card tip small" style="margin-top:14px"><b>Tipp:</b> ${esc(tip)}</div>
     ${S.log.length ? `<h2>Zuletzt</h2>${S.log.slice(0, 3).map(logItem).join('')}` : ''}
@@ -13336,6 +13463,8 @@ function viewHome() {
   S.tip = (S.tip || 0) + 1; save();
   if ($('#startNext', v)) $('#startNext', v).onclick = () => startWorkout(plan.id, nextDayIdx(plan));
   $('#qLog', v).onclick = () => manualLog();
+  $('#qBef', v).onclick = () => befindenLog();
+  if ($('#homeBak', v)) $('#homeBak', v).onclick = doBackup;
   if ($('#homeInst', v)) $('#homeInst', v).onclick = showInstall;
 }
 
@@ -13646,18 +13775,17 @@ function finishWorkout() {
     <div class="rpe" id="rpe">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<button data-v="${n}">${n}</button>`).join('')}</div>
     <p class="small" id="rpeL" style="text-align:center;min-height:1.4em"></p>
     <label class="f" for="fd">Dauer (Minuten)</label><input id="fd" type="number" min="1" max="300" inputmode="numeric" value="${Math.min(mins, 300)}">
-    <label class="row" style="margin-top:12px"><input type="checkbox" id="fp" style="width:auto"> <span>Ich hatte Schmerzen</span></label>
-    <div class="card warn small" id="painHint" hidden>Sag deiner Lehrkraft bzw. deinem Trainer Bescheid. Trainiere die betroffene Stelle nicht weiter, bis es abgeklärt ist.</div>
+    <details class="card small wb" open><summary><b>Befinden</b> <span class="tiny">(freiwillig, dauert 10 Sekunden)</span></summary>${wellnessHtml('training')}</details>
     <label class="f" for="fn">Notiz (optional)</label><textarea id="fn" maxlength="300" placeholder="Wie lief's? Was war schwer?"></textarea>
     <div class="btns"><button class="btn" id="fb">Zurück</button><button class="btn btn-primary" id="fs">Speichern</button></div>`, sh => {
     $$('#rpe button', sh).forEach(b => b.onclick = () => { rpe = +b.dataset.v; $$('#rpe button', sh).forEach(x => x.classList.toggle('on', x === b)); $('#rpeL', sh).textContent = RPE_LABELS[rpe]; });
-    $('#fp', sh).onchange = e => { $('#painHint', sh).hidden = !e.target.checked; };
+    const readW = bindWellness(sh);
     $('#fb', sh).onclick = closeModal;
     $('#fs', sh).onclick = () => {
       if (!rpe) return toast('Bitte wähle einen RPE-Wert.');
       const p = S.plans.find(x => x.id === w.planId);
-      S.log.unshift({ id: uid(), date: today(), type: 'app', planId: w.planId, dayIdx: w.dayIdx, title: w.title, plan: p ? p.name : '',
-        dur: Math.max(1, parseInt($('#fd', sh).value) || mins), rpe, pain: $('#fp', sh).checked, note: $('#fn', sh).value.trim(),
+      S.log.unshift({ id: uid(), ts: Date.now(), date: today(), type: 'app', planId: w.planId, dayIdx: w.dayIdx, title: w.title, plan: p ? p.name : '',
+        dur: Math.max(1, parseInt($('#fd', sh).value) || mins), rpe, ...readW(), note: $('#fn', sh).value.trim(),
         items: w.items.map(i => ({ ex: i.ex, sets: i.sets })) });
       S.wip = null; save(); stopRest(); closeModal(); toast('💪 Stark! Training gespeichert.'); go('#log');
     };
@@ -13717,10 +13845,18 @@ function exerciseTimer(sec, name) {
 }
 
 /* ================= Tagebuch ================= */
-const TYPES = { app: '🏋️ Athletik (App)', verein: '⚽ Vereinstraining', wettkampf: '🏆 Wettkampf/Spiel', schule: '🏫 Schulsport', sonst: '➕ Sonstiges' };
+const TYPES = { app: '🏋️ Athletik (App)', verein: '⚽ Vereinstraining', wettkampf: '🏆 Wettkampf/Spiel', schule: '🏫 Schulsport', sonst: '➕ Sonstiges', befinden: '🌙 Befinden (Pausetag)' };
+function painBadge(l) { if (!l.pain) return ''; if (l.pain === true) return ' <span class="badge accent">Schmerz</span>'; return ` <span class="badge ${l.pain > 5 ? 'accent' : ''}">Schmerz ${l.pain}</span>`; }
+function wellLine(l) {
+  const p = []; if (l.sl) p.push('Schlaf ' + l.sl + '/4'); if (energyOf(l)) p.push('Energie ' + energyOf(l) + '/4'); if (l.eo) p.push('danach ' + l.eo + '/4'); if (l.mk) p.push('Muskelkater');
+  return p.join(' · ');
+}
 function logItem(l) {
-  return `<div class="item" data-log="${l.id}"><div class="grow"><div class="t">${esc(l.type === 'app' ? l.title : TYPES[l.type] || 'Training')}${l.pain ? ' <span class="badge accent">Schmerz</span>' : ''}</div>
-    <div class="s">${fmtDate(l.date)} · ${l.dur} min · RPE ${l.rpe}${l.type === 'app' && l.plan ? ' · ' + esc(l.plan) : ''}</div></div><span class="badge">${l.dur * l.rpe}</span></div>`;
+  if (l.type === 'befinden') return `<div class="item" data-log="${l.id}"><div class="grow"><div class="t">${TYPES.befinden}${painBadge(l)}</div>
+    <div class="s">${fmtDate(l.date)}${wellLine(l) ? ' · ' + wellLine(l) : ''}</div></div></div>`;
+  const wl = wellLine(l);
+  return `<div class="item" data-log="${l.id}"><div class="grow"><div class="t">${esc(l.type === 'app' ? l.title : TYPES[l.type] || 'Training')}${painBadge(l)}</div>
+    <div class="s">${fmtDate(l.date)} · ${l.dur} min · RPE ${l.rpe}${l.type === 'app' && l.plan ? ' · ' + esc(l.plan) : ''}</div>${wl ? `<div class="s">${wl}</div>` : ''}</div><span class="badge">${l.dur * l.rpe}</span></div>`;
 }
 function viewLog() {
   setTitle('Trainingstagebuch', false);
@@ -13730,11 +13866,14 @@ function viewLog() {
       <div class="bars">${w.map((x, i) => `<div class="bar ${i === 7 ? 'cur' : ''}" title="${x.load}"><span>${x.load || ''}</span><i style="height:${x.load / max * 80}%"></i><span>${new Date(x.key + 'T12:00:00').toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}</span></div>`).join('')}</div>
       <p class="tiny">Zählt alle Einheiten – auch Verein, Wettkampf und Schulsport.</p></div>
     ${warn ? `<div class="card warn small">⚠️ ${esc(warn)}</div>` : ''}
+    ${energyWarning() ? `<div class="card warn small">🔋 ${esc(energyWarning())}</div>` : ''}
     <button class="btn btn-dark btn-block" id="addLog">＋ Training eintragen (Verein, Spiel …)</button>
+    <div class="btns"><button class="btn" id="addBef">🌙 Befinden (Pausetag)</button><a class="btn" href="#beschwerden">🩹 Beschwerden${activeComplaints().length ? ' (' + activeComplaints().length + ')' : ''}</a></div>
     <h2>Alle Einträge</h2>
     ${S.log.length ? S.log.map(logItem).join('') : '<div class="empty"><div class="big">📓</div><p>Noch keine Einträge. Nach jedem Training landet hier dein Protokoll.</p></div>'}
   `);
   $('#addLog', v).onclick = () => manualLog();
+  $('#addBef', v).onclick = () => befindenLog();
   $$('[data-log]', v).forEach(el => el.onclick = () => showLog(el.dataset.log));
 }
 function manualLog() {
@@ -13745,24 +13884,29 @@ function manualLog() {
     <div><label class="f" for="mdu">Dauer (min)</label><input id="mdu" type="number" min="1" max="300" inputmode="numeric" value="90"></div></div>
     <label class="f">Anstrengung (RPE)</label><div class="rpe" id="rpe">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<button data-v="${n}">${n}</button>`).join('')}</div>
     <p class="small" id="rpeL" style="text-align:center;min-height:1.4em"></p>
-    <label class="row"><input type="checkbox" id="mp" style="width:auto"> <span>Ich hatte Schmerzen</span></label>
+    <details class="card small wb"><summary><b>Befinden</b> <span class="tiny">(freiwillig)</span></summary>${wellnessHtml('training')}</details>
     <label class="f" for="mn">Notiz</label><input id="mn" maxlength="200">
     <div class="btns"><button class="btn" id="mx">Abbrechen</button><button class="btn btn-primary" id="ms">Speichern</button></div>`, sh => {
     $$('#rpe button', sh).forEach(b => b.onclick = () => { rpe = +b.dataset.v; $$('#rpe button', sh).forEach(x => x.classList.toggle('on', x === b)); $('#rpeL', sh).textContent = RPE_LABELS[rpe]; });
+    const readW = bindWellness(sh);
     $('#mx', sh).onclick = closeModal;
     $('#ms', sh).onclick = () => {
       if (!rpe) return toast('Bitte wähle einen RPE-Wert.');
-      S.log.push({ id: uid(), date: $('#mdt', sh).value || today(), type: $('#mt', sh).value, dur: Math.max(1, parseInt($('#mdu', sh).value) || 60), rpe, pain: $('#mp', sh).checked, note: $('#mn', sh).value.trim() });
-      S.log.sort((a, b) => b.date.localeCompare(a.date)); save(); closeModal(); toast('Eingetragen'); route();
+      S.log.push({ id: uid(), ts: Date.now(), date: $('#mdt', sh).value || today(), type: $('#mt', sh).value, dur: Math.max(1, parseInt($('#mdu', sh).value) || 60), rpe, ...readW(), note: $('#mn', sh).value.trim() });
+      S.log.sort(byTimeDesc); save(); closeModal(); toast('Eingetragen'); route();
     };
   });
 }
 function showLog(id) {
   const l = S.log.find(x => x.id === id); if (!l) return;
+  const cps = Object.entries(l.cp || {}).map(([id, v]) => `${esc((complaintById(id) || { name: 'gelöschte Beschwerde' }).name)}: <b>${v}/10</b>`);
+  const wb = [l.sl ? 'Schlaf: ' + l.sl + '/4 (' + SLEEP_L[l.sl] + ')' : '', l.ei ? 'Energie im Training: ' + l.ei + '/4 (' + EN_IN_L[l.ei] + ')' : '', l.eo ? 'Energie danach: ' + l.eo + '/4 (' + EN_OUT_L[l.eo] + ')' : '', l.ed ? 'Energie: ' + l.ed + '/4 (' + EN_DAY_L[l.ed] + ')' : '', l.mk === true ? 'Muskelkater: ja' : l.mk === false ? 'Muskelkater: nein' : ''].filter(Boolean);
   openModal(`<h3>${esc(l.type === 'app' ? l.title : TYPES[l.type])}</h3>
-    <p class="small muted">${fmtDate(l.date)} · ${l.dur} min · RPE ${l.rpe} (${esc(RPE_LABELS[l.rpe])}) · Belastung ${l.dur * l.rpe}</p>
+    <p class="small muted">${fmtDate(l.date)}${l.type === 'befinden' ? '' : ` · ${l.dur} min · RPE ${l.rpe} (${esc(RPE_LABELS[l.rpe])}) · Belastung ${l.dur * l.rpe}`}</p>
     ${l.plan ? `<p class="small">Plan: ${esc(l.plan)}</p>` : ''}
-    ${l.pain ? '<div class="card warn small">Schmerzen angegeben – bitte mit Lehrkraft/Trainer besprechen.</div>' : ''}
+    ${wb.length ? `<p class="small">${wb.map(esc).join('<br>')}</p>` : ''}
+    ${cps.length ? `<p class="small">Beschwerden: ${cps.join(' · ')}</p>` : ''}
+    ${(l.pain === true || l.pain > 5) ? '<div class="card warn small">Deutliche Schmerzen angegeben – bitte mit Lehrkraft/Trainer besprechen.</div>' : ''}
     ${l.note ? `<p>${esc(l.note)}</p>` : ''}
     ${(l.items || []).map(i => { const s = i.sets.filter(x => x.done); return `<div class="ex-row"><div class="grow"><b>${esc(ex(i.ex).n)}</b><div class="small muted">${s.length ? s.map(x => esc(x.r || '–') + (x.kg ? ' × ' + esc(x.kg) + ' kg' : '')).join(' | ') : 'nicht absolviert'}</div></div></div>`; }).join('')}
     <div class="btns"><button class="btn btn-danger" id="ld">Löschen</button><button class="btn btn-dark" id="lc">Schließen</button></div>`, sh => {
@@ -14064,11 +14208,12 @@ function viewMore() {
     <h2>App &amp; Daten</h2>
     ${standalone ? '<p class="small">✓ App ist auf diesem Gerät installiert.</p>' : '<button class="btn btn-primary btn-block" id="inst">📲 App aufs Handy installieren</button>'}
     <button class="btn btn-block" id="appQr" style="margin-top:8px">▣ QR-Code zur App-Adresse zeigen</button>
-    <div class="btns"><button class="btn" id="exp">⬇ Datensicherung</button><label class="btn" for="impF">⬆ Sicherung laden</label></div>
+    <div class="btns"><button class="btn" id="exp">💾 Sicherung teilen/speichern</button><label class="btn" for="impF">⬆ Sicherung laden</label></div>
+    <p class="tiny">${S.lastBackup ? 'Letzte Sicherung: ' + fmtDate(S.lastBackup) : 'Noch keine Sicherung erstellt.'}</p>
     <input type="file" id="impF" accept="application/json,.json" hidden>
     <button class="btn btn-danger btn-block" id="wipe">Alle Daten löschen</button>
     <p class="tiny" style="margin-top:16px">Alle Daten liegen ausschließlich auf diesem Gerät (Browser-Speicher). Beim Löschen der Browserdaten gehen sie verloren – mache gelegentlich eine Datensicherung.<br>
-    AVG Leistungsteam · Version 1.0 · Enthält jsQR (Apache-2.0), qrcode-generator (MIT), lz-string (MIT).</p>
+    AVG Leistungsteam · Version 1.1 · Enthält jsQR (Apache-2.0), qrcode-generator (MIT), lz-string (MIT).</p>
   `);
   if ($('#inst', v)) $('#inst', v).onclick = showInstall;
   $('#appQr', v).onclick = () => {
@@ -14078,10 +14223,7 @@ function viewMore() {
       <div class="qr-box">${qrSvg(url)}</div><p class="small" style="text-align:center;word-break:break-all">${esc(url)}</p>
       <button class="btn btn-dark btn-block" id="qc">Schließen</button>`, sh => { $('#qc', sh).onclick = closeModal; });
   };
-  $('#exp', v).onclick = () => {
-    const blob = new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }); const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = `avg-leistungsteam-${today()}.json`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  };
+  $('#exp', v).onclick = doBackup;
   $('#impF', v).onchange = e => {
     const f = e.target.files[0]; if (!f) return; const r = new FileReader();
     r.onload = async () => { try { const o = JSON.parse(r.result); if (!o || o.v !== 1 || !Array.isArray(o.plans) || !Array.isArray(o.log)) throw 0;
