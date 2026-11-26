@@ -224,6 +224,25 @@ textarea { min-height: 80px; resize: vertical; }
 details.wb { margin-top: 12px; } details.wb summary { cursor: pointer; }
 .cp-row { padding: 4px 0; } .cp-row select { width: 76px; padding: 6px 8px; }
 
+/* Paket 2: Kalender & Verteilung */
+.cal { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-top: 10px; }
+.cal-h { text-align: center; font-size: .7rem; font-weight: 700; color: var(--ink3); }
+.cal-d { position: relative; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; padding: 3px; display: flex; flex-direction: column; align-items: center; justify-content: space-between; cursor: pointer; min-width: 0; }
+.cal-d.empty { border: 0; background: transparent; cursor: default; }
+.cal-d.today { border: 2px solid var(--accent); }
+.cal-d.ev { box-shadow: inset 0 0 0 2px #d97706; }
+.cal-n { font-size: .78rem; font-weight: 700; }
+.cal-dots { display: flex; gap: 2px; flex-wrap: wrap; justify-content: center; min-height: 7px; }
+.cal-dots i { width: 7px; height: 7px; border-radius: 50%; display: block; }
+.cal-sick { position: absolute; left: 4px; right: 4px; bottom: 2px; height: 2px; border-radius: 2px; background: var(--warn); }
+.legend-row { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 10px; font-size: .72rem; color: var(--ink2); }
+.legend-row i { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+.legend-row i.ring { background: none; box-shadow: inset 0 0 0 2px #d97706; border-radius: 3px; }
+.legend-row i.bar-s { width: 12px; height: 3px; border-radius: 2px; background: var(--warn); vertical-align: 2px; }
+.stack { display: flex; height: 14px; border-radius: 99px; overflow: hidden; margin: 8px 0 6px; background: var(--line); }
+.stack i { display: block; height: 100%; }
+.dist-r { padding: 3px 0; }
+
 </style>
 </head>
 <body>
@@ -13150,7 +13169,7 @@ const CHEV = '<svg class="chev" viewBox="0 0 24 24" width="20" height="20"><path
 const KEY = 'avg-leistungsteam-v1';
 function blank() {
   return { v: 1, profile: { name: '', sport: '', level: 'einsteiger', onboarded: false },
-    plans: [], customEx: [], log: [], tests: [], complaints: [], lastBackup: null, activePlan: null, wip: null, tip: 0 };
+    plans: [], customEx: [], log: [], tests: [], complaints: [], types: [], events: [], lastBackup: null, activePlan: null, wip: null, tip: 0 };
 }
 let S = (() => {
   try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.v === 1) return Object.assign(blank(), s); } catch (e) { /* leer */ }
@@ -13208,7 +13227,7 @@ function go(h) { if (location.hash === h) route(); else location.hash = h; }
 const ROUTES = {
   home: viewHome, plans: viewPlans, plan: viewPlan, edit: viewEdit, templates: viewTemplates,
   lib: viewLib, ex: viewEx, log: viewLog, tests: viewTests, more: viewMore,
-  scan: viewScan, share: viewShare, workout: viewWorkout, onboard: viewOnboard, safety: viewSafety, profile: viewProfile, beschwerden: viewComplaints
+  scan: viewScan, share: viewShare, workout: viewWorkout, onboard: viewOnboard, safety: viewSafety, profile: viewProfile, beschwerden: viewComplaints, wettkaempfe: viewEvents, arten: viewTypes
 };
 let pendingImport = null;
 function route() {
@@ -13225,7 +13244,7 @@ function route() {
   fn(arg);
   window.scrollTo(0, 0);
 }
-function tabOf(n) { return { plan: 'plans', edit: 'plans', templates: 'plans', share: 'plans', ex: 'lib', tests: 'more', safety: 'more', profile: 'more', beschwerden: 'log' }[n] || n; }
+function tabOf(n) { return { plan: 'plans', edit: 'plans', templates: 'plans', share: 'plans', ex: 'lib', tests: 'more', safety: 'more', profile: 'more', beschwerden: 'log', wettkaempfe: 'log', arten: 'log' }[n] || n; }
 window.addEventListener('hashchange', route);
 
 function V(html) { $('#view').innerHTML = html; return $('#view'); }
@@ -13361,9 +13380,9 @@ function energyWarning() {
   return '';
 }
 function complaintHistory(id) { return S.log.filter(l => l.cp && l.cp[id] != null).sort(byTimeDesc).reverse().map(l => ({ date: l.date, v: l.cp[id] })); }
-function befindenLog() {
+function befindenLog(preDate) {
   openModal(`<h3>Befinden eintragen</h3><p class="small muted">Für Tage ohne Training. Alles ist freiwillig – so siehst du, ob deine Erholung reicht.</p>
-    <label class="f" for="bdt">Datum</label><input id="bdt" type="date" value="${today()}" max="${today()}">
+    <label class="f" for="bdt">Datum</label><input id="bdt" type="date" value="${preDate || today()}" max="${today()}">
     ${wellnessHtml('day')}
     <label class="f" for="bn">Notiz</label><input id="bn" maxlength="200">
     <div class="btns"><button class="btn" id="bx">Abbrechen</button><button class="btn btn-primary" id="bs">Speichern</button></div>`, sh => {
@@ -13448,6 +13467,7 @@ function viewHome() {
     </div>
     ${warn ? `<div class="card warn small">⚠️ ${esc(warn)}</div>` : ''}
     ${ewarn ? `<div class="card warn small">🔋 ${esc(ewarn)}</div>` : ''}
+    ${eventHints().map(h => `<div class="card ${h.cls || ''} small" ${h.go ? `data-go="${h.go}" style="cursor:pointer"` : ''}>${h.html}</div>`).join('')}
     ${act.length ? `<a class="item" href="#beschwerden"><div class="grow"><div class="t">🩹 Aktive Beschwerden</div><div class="s">${act.map(c => { const h = complaintHistory(c.id), l = h[h.length - 1]; return esc(c.name) + (l ? ' (zuletzt ' + l.v + '/10)' : ''); }).join(' · ')}</div></div>${CHEV}</a>` : ''}
     <div class="grid2">
       <button class="btn" id="qLog">＋ Vereinstraining</button>
@@ -13464,6 +13484,7 @@ function viewHome() {
   if ($('#startNext', v)) $('#startNext', v).onclick = () => startWorkout(plan.id, nextDayIdx(plan));
   $('#qLog', v).onclick = () => manualLog();
   $('#qBef', v).onclick = () => befindenLog();
+  $$('[data-go]', v).forEach(el => el.onclick = () => go(el.dataset.go));
   if ($('#homeBak', v)) $('#homeBak', v).onclick = doBackup;
   if ($('#homeInst', v)) $('#homeInst', v).onclick = showInstall;
 }
@@ -13852,12 +13873,158 @@ function wellLine(l) {
   return p.join(' · ');
 }
 function logItem(l) {
-  if (l.type === 'befinden') return `<div class="item" data-log="${l.id}"><div class="grow"><div class="t">${TYPES.befinden}${painBadge(l)}</div>
+  if (l.type === 'befinden') return `<div class="item" data-log="${l.id}"><span class="dot" style="background:${TYPE_COLORS.befinden}"></span><div class="grow"><div class="t">${TYPES.befinden}${painBadge(l)}</div>
     <div class="s">${fmtDate(l.date)}${wellLine(l) ? ' · ' + wellLine(l) : ''}</div></div></div>`;
   const wl = wellLine(l);
-  return `<div class="item" data-log="${l.id}"><div class="grow"><div class="t">${esc(l.type === 'app' ? l.title : TYPES[l.type] || 'Training')}${painBadge(l)}</div>
-    <div class="s">${fmtDate(l.date)} · ${l.dur} min · RPE ${l.rpe}${l.type === 'app' && l.plan ? ' · ' + esc(l.plan) : ''}</div>${wl ? `<div class="s">${wl}</div>` : ''}</div><span class="badge">${l.dur * l.rpe}</span></div>`;
+  const xl = extraLine(l);
+  return `<div class="item" data-log="${l.id}"><span class="dot" style="background:${typeColor(l.type)}"></span><div class="grow"><div class="t">${esc(entryTitle(l))}${painBadge(l)}</div>
+    <div class="s">${fmtDate(l.date)} · ${l.dur} min · RPE ${l.rpe}${xl ? ' · ' + xl : ''}${l.type === 'app' && l.plan ? ' · ' + esc(l.plan) : ''}</div>${wl ? `<div class="s">${wl}</div>` : ''}</div><span class="badge">${l.dur * l.rpe}</span></div>`;
 }
+/* ================= Paket 2: Trainingsarten, Sportart-Felder, Wettkämpfe, Kalender ================= */
+const TYPE_COLORS = { app: '#d9122b', verein: '#2563eb', wettkampf: '#d97706', schule: '#16a34a', sonst: '#64748b', befinden: '#7c3aed' };
+const CUSTOM_COLORS = ['#0891b2', '#db2777', '#65a30d', '#9333ea', '#ea580c', '#0d9488', '#4f46e5', '#a16207'];
+function customType(id) { return S.types.find(t => t.id === id); }
+function typeName(t) { return TYPES[t] || (customType(t) ? '• ' + customType(t).name : 'Training'); }
+function typeColor(t) { return TYPE_COLORS[t] || (customType(t) ? customType(t).color : '#64748b'); }
+function entryTitle(l) { return l.type === 'app' ? l.title : typeName(l.type); }
+/* Zusatzfeld je Sportart des Profils */
+function sportField(sp = S.profile.sport) {
+  return { s: { key: 'km', label: 'Umfang im Wasser', unit: 'km', step: '0.1', max: 20 },
+    f: { key: 'spielmin', label: 'Einsatzminuten (Spiel)', unit: 'min', step: '1', max: 130 },
+    h: { key: 'spielmin', label: 'Einsatzminuten (Spiel)', unit: 'min', step: '1', max: 70 },
+    t: { key: 'matches', label: 'Matches gespielt', unit: 'Matches', step: '1', max: 10 } }[sp] || null;
+}
+function extraLine(l) {
+  const p = []; if (l.km) p.push(String(l.km).replace('.', ',') + ' km'); if (l.spielmin) p.push(l.spielmin + ' Spielminuten'); if (l.matches) p.push(l.matches + (l.matches === 1 ? ' Match' : ' Matches'));
+  return p.join(' · ');
+}
+function typeOptions(sel) {
+  const base = Object.entries(TYPES).filter(([k]) => k !== 'app' && k !== 'befinden').map(([k, t]) => `<option value="${k}" ${sel === k ? 'selected' : ''}>${t}</option>`).join('');
+  const own = S.types.map(t => `<option value="${t.id}" ${sel === t.id ? 'selected' : ''}>• ${esc(t.name)}</option>`).join('');
+  return base + (own ? `<optgroup label="Eigene Arten">${own}</optgroup>` : '') + '<option value="__new">＋ Neue Trainingsart …</option>';
+}
+function addType(name) { const t = { id: 'x' + uid(), name: name.slice(0, 30), color: CUSTOM_COLORS[S.types.length % CUSTOM_COLORS.length] }; S.types.push(t); save(); return t; }
+function viewTypes() {
+  setTitle('Trainingsarten', true);
+  const used = id => S.log.filter(l => l.type === id).length;
+  const v = V(`<p class="small muted" style="margin-top:6px">Lege eigene Arten an, z. B. „Wassertraining“, „Torwarttraining“ oder „Turnier“. Sie erscheinen beim Eintragen, im Kalender und in der Verteilung.</p>
+    <div class="row"><input id="ntName" maxlength="30" placeholder="Neue Trainingsart"><button class="btn btn-dark" id="ntAdd">＋</button></div>
+    <h2>Eigene Arten</h2>
+    ${S.types.map(t => `<div class="item"><span class="dot" style="background:${t.color}"></span><div class="grow"><div class="t">${esc(t.name)}</div><div class="s">${used(t.id)} Einträge</div></div><button class="btn btn-sm btn-danger" data-delt="${t.id}">Löschen</button></div>`).join('') || '<p class="muted small">Noch keine eigenen Arten.</p>'}
+    <h2>Vorgegeben</h2>
+    ${Object.entries(TYPES).map(([k, n]) => `<div class="item" style="cursor:default"><span class="dot" style="background:${TYPE_COLORS[k]}"></span><div class="grow"><div class="t">${n}</div></div></div>`).join('')}`);
+  $('#ntAdd', v).onclick = () => { const n = $('#ntName', v).value.trim(); if (!n) return toast('Bitte einen Namen eingeben.'); addType(n); toast('Trainingsart angelegt'); route(); };
+  $$('[data-delt]', v).forEach(b => b.onclick = async () => {
+    const n = used(b.dataset.delt);
+    if (!await confirmBox(n ? `Art löschen? ${n} Einträge werden zu „Sonstiges“.` : 'Art löschen?', 'Löschen', true)) return;
+    S.log.forEach(l => { if (l.type === b.dataset.delt) l.type = 'sonst'; }); S.types = S.types.filter(t => t.id !== b.dataset.delt); save(); route();
+  });
+}
+/* ---------- Wettkämpfe ---------- */
+const PRIO = { 1: 'Hauptwettkampf', 2: 'Aufbauwettkampf', 3: 'Trainingswettkampf' };
+function daysUntil(d) { return Math.round((new Date(d + 'T12:00:00') - new Date(today() + 'T12:00:00')) / 864e5); }
+function upcomingEvents() { return S.events.filter(e => daysUntil(e.date) >= 0).sort((a, b) => a.date.localeCompare(b.date)); }
+function eventHints() {
+  const out = [];
+  const next = upcomingEvents()[0];
+  if (next) {
+    const d = daysUntil(next.date);
+    if (d === 0) out.push({ cls: 'tip', html: `🏆 <b>Heute: ${esc(next.name)}</b> – viel Erfolg! Gut aufwärmen und danach das Ergebnis eintragen.` });
+    else if (next.prio === 1 && d <= 7) out.push({ cls: 'tip', html: `🏆 <b>${esc(next.name)} in ${d} ${d === 1 ? 'Tag' : 'Tagen'}.</b> Leichtere Woche: Umfang etwa halbieren, Intensität kurz und knackig halten, keine neuen Übungen, viel schlafen.` });
+    else if (d <= 21) out.push({ cls: '', html: `🏆 Nächster Wettkampf: <b>${esc(next.name)}</b> am ${fmtDate(next.date)} (in ${d} Tagen)` });
+  }
+  const open = S.events.filter(e => !e.result && daysUntil(e.date) < 0 && daysUntil(e.date) >= -14);
+  if (open.length) out.push({ cls: '', html: `📝 Ergebnis eintragen: <b>${esc(open[0].name)}</b> vom ${fmtDate(open[0].date)}`, go: '#wettkaempfe' });
+  return out;
+}
+function editEvent(e) {
+  const x = e || { id: 'w' + uid(), date: today(), name: '', prio: 2, result: null };
+  openModal(`<h3>${e ? 'Wettkampf bearbeiten' : 'Wettkampf planen'}</h3>
+    <label class="f" for="evN">Name</label><input id="evN" maxlength="50" value="${esc(x.name)}" placeholder="z. B. Bezirksmeisterschaft">
+    <label class="f" for="evD">Datum</label><input id="evD" type="date" value="${x.date}">
+    <label class="f" for="evP">Wichtigkeit</label><select id="evP">${[1, 2, 3].map(k => `<option value="${k}" ${x.prio === k ? 'selected' : ''}>${PRIO[k]}</option>`).join('')}</select>
+    <p class="tiny">Vor einem Hauptwettkampf erinnert die App an eine leichtere Woche.</p>
+    <div class="btns">${e ? '<button class="btn btn-danger" id="evDel">Löschen</button>' : ''}<button class="btn" id="evX">Abbrechen</button><button class="btn btn-primary" id="evS">Speichern</button></div>`, sh => {
+    $('#evX', sh).onclick = closeModal;
+    if ($('#evDel', sh)) $('#evDel', sh).onclick = async () => { closeModal(); if (await confirmBox('Wettkampf löschen?', 'Löschen', true)) { S.events = S.events.filter(y => y.id !== x.id); save(); route(); } };
+    $('#evS', sh).onclick = () => {
+      const n = $('#evN', sh).value.trim(); if (!n) return toast('Bitte einen Namen eingeben.');
+      Object.assign(x, { name: n, date: $('#evD', sh).value || today(), prio: +$('#evP', sh).value }); if (!e) S.events.push(x); save(); closeModal(); toast('Gespeichert'); route();
+    };
+  });
+}
+function resultEvent(e) {
+  const r = e.result || {};
+  openModal(`<h3>Ergebnis: ${esc(e.name)}</h3><p class="small muted">${fmtDate(e.date)} · ${PRIO[e.prio]}</p>
+    <div class="grid2"><div><label class="f" for="rP">Platz</label><input id="rP" inputmode="numeric" maxlength="6" value="${esc(r.place || '')}"></div>
+    <div><label class="f" for="rZ">Zeit / Ergebnis</label><input id="rZ" maxlength="30" value="${esc(r.score || '')}" placeholder="z. B. 1:05,32 oder 3:1"></div></div>
+    <label class="f" for="rN">Notiz</label><textarea id="rN" maxlength="300" placeholder="Was lief gut, was nehme ich mit?">${esc(r.note || '')}</textarea>
+    <label class="row" style="margin-top:10px"><input type="checkbox" id="rL" style="width:auto" ${S.log.some(l => l.eventId === e.id) ? 'disabled' : 'checked'}> <span>${S.log.some(l => l.eventId === e.id) ? 'Bereits im Tagebuch eingetragen' : 'Danach als Einheit ins Tagebuch eintragen (Belastung)'}</span></label>
+    <div class="btns"><button class="btn" id="rX">Abbrechen</button><button class="btn btn-primary" id="rS">Speichern</button></div>`, sh => {
+    $('#rX', sh).onclick = closeModal;
+    $('#rS', sh).onclick = () => {
+      e.result = { place: $('#rP', sh).value.trim(), score: $('#rZ', sh).value.trim(), note: $('#rN', sh).value.trim() }; save();
+      const toLog = $('#rL', sh).checked && !$('#rL', sh).disabled; closeModal();
+      if (toLog) manualLog({ type: 'wettkampf', date: e.date, eventId: e.id, note: e.name + (e.result.place ? ' – Platz ' + e.result.place : '') + (e.result.score ? ' – ' + e.result.score : '') });
+      else { toast('Ergebnis gespeichert'); route(); }
+    };
+  });
+}
+function viewEvents() {
+  setTitle('Wettkämpfe', true);
+  const up = upcomingEvents(), past = S.events.filter(e => daysUntil(e.date) < 0).sort((a, b) => b.date.localeCompare(a.date));
+  const item = e => { const d = daysUntil(e.date); const r = e.result;
+    return `<div class="item" data-ev="${e.id}"><span class="dot" style="background:${TYPE_COLORS.wettkampf};opacity:${e.prio === 1 ? 1 : e.prio === 2 ? .65 : .35}"></span><div class="grow"><div class="t">${esc(e.name)}</div>
+      <div class="s">${fmtDate(e.date)} · ${PRIO[e.prio]}${d >= 0 ? ` · ${d === 0 ? 'heute' : 'in ' + d + (d === 1 ? ' Tag' : ' Tagen')}` : ''}</div>
+      ${r ? `<div class="s">🏅 ${[r.place ? 'Platz ' + esc(r.place) : '', esc(r.score || '')].filter(Boolean).join(' · ') || 'Ergebnis eingetragen'}</div>` : ''}</div>
+      ${d <= 0 ? `<button class="btn btn-sm ${r ? '' : 'btn-dark'}" data-res="${e.id}">${r ? 'Ergebnis' : 'Ergebnis eintragen'}</button>` : ''}</div>`; };
+  const v = V(`<button class="btn btn-dark btn-block" id="evNew" style="margin-top:6px">＋ Wettkampf planen</button>
+    <h2>Geplant</h2>${up.map(item).join('') || '<p class="muted small">Keine Wettkämpfe geplant.</p>'}
+    ${past.length ? `<h2>Vergangen</h2>${past.map(item).join('')}` : ''}`);
+  $('#evNew', v).onclick = () => editEvent();
+  $$('[data-res]', v).forEach(b => b.onclick = ev => { ev.stopPropagation(); resultEvent(S.events.find(e => e.id === b.dataset.res)); });
+  $$('[data-ev]', v).forEach(el => el.onclick = () => editEvent(S.events.find(e => e.id === el.dataset.ev)));
+}
+/* ---------- Kalender & Verteilung ---------- */
+let logView = 'list', calMonth = null;
+function ymd(y, m, d) { return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
+function calendarHtml(ym) {
+  const [y, m] = ym.split('-').map(Number); const first = new Date(Date.UTC(y, m - 1, 1)); const lead = (first.getUTCDay() + 6) % 7; const n = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const cells = []; for (let i = 0; i < lead; i++) cells.push('<div class="cal-d empty"></div>');
+  for (let d = 1; d <= n; d++) {
+    const ds = ymd(y, m, d); const es = S.log.filter(l => l.date === ds); const evs = S.events.filter(e => e.date === ds);
+    const sick = ds <= today() && S.complaints.some(c => c.start <= ds && (!c.healed || c.healed >= ds));
+    cells.push(`<button class="cal-d ${ds === today() ? 'today' : ''} ${evs.length ? 'ev' : ''}" data-day="${ds}"><span class="cal-n">${d}</span>
+      <span class="cal-dots">${es.slice(0, 4).map(l => `<i style="background:${typeColor(l.type)}"></i>`).join('')}</span>${sick ? '<span class="cal-sick"></span>' : ''}</button>`);
+  }
+  const label = new Date(Date.UTC(y, m - 1, 15)).toLocaleDateString('de-DE', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  return `<div class="card"><div class="row"><button class="btn btn-sm" id="calPrev" aria-label="Vormonat">◀</button><h3 class="grow" style="text-align:center">${label}</h3><button class="btn btn-sm" id="calNext" aria-label="Folgemonat">▶</button></div>
+    <div class="cal">${['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'].map(w => `<div class="cal-h">${w}</div>`).join('')}${cells.join('')}</div>
+    <div class="legend-row">${Object.entries(TYPE_COLORS).map(([k, c]) => `<span><i style="background:${c}"></i>${TYPES[k].replace(/^\S+\s/, '')}</span>`).join('')}${S.types.map(t => `<span><i style="background:${t.color}"></i>${esc(t.name)}</span>`).join('')}<span><i class="ring"></i>Wettkampf</span><span><i class="bar-s"></i>Beschwerde aktiv</span></div></div>`;
+}
+function dayModal(ds) {
+  const es = S.log.filter(l => l.date === ds), evs = S.events.filter(e => e.date === ds);
+  openModal(`<h3>${fmtDate(ds)}</h3>${evs.map(e => `<div class="card tip small">🏆 <b>${esc(e.name)}</b> · ${PRIO[e.prio]}${e.result ? ' · ' + [e.result.place ? 'Platz ' + esc(e.result.place) : '', esc(e.result.score || '')].filter(Boolean).join(' · ') : ''}</div>`).join('')}
+    ${es.map(logItem).join('') || '<p class="muted small">Keine Einträge an diesem Tag.</p>'}
+    <div class="btns"><button class="btn" id="dTr">＋ Training</button><button class="btn" id="dBef">🌙 Befinden</button><button class="btn" id="dEv">🏆 Wettkampf</button></div>
+    <button class="btn btn-dark btn-block" id="dX">Schließen</button>`, sh => {
+    $$('[data-log]', sh).forEach(el => el.onclick = () => showLog(el.dataset.log));
+    $('#dTr', sh).onclick = () => manualLog({ date: ds }); $('#dBef', sh).onclick = () => befindenLog(ds);
+    $('#dEv', sh).onclick = () => { closeModal(); editEvent(); setTimeout(() => { const i = $('#evD'); if (i) i.value = ds; }, 0); };
+    $('#dX', sh).onclick = closeModal;
+  });
+}
+function distributionHtml(weeks = 4) {
+  const from = new Date(today() + 'T12:00:00'); from.setDate(from.getDate() - 7 * weeks + 1); const fs = from.toISOString().slice(0, 10);
+  const es = S.log.filter(l => l.type !== 'befinden' && l.date >= fs); if (!es.length) return '';
+  const g = {}; es.forEach(l => { const k = l.type; g[k] = g[k] || { n: 0, min: 0, load: 0 }; g[k].n++; g[k].min += l.dur || 0; g[k].load += (l.dur || 0) * (l.rpe || 0); });
+  const rows = Object.entries(g).sort((a, b) => b[1].n - a[1].n); const tot = es.length;
+  return `<div class="card"><div class="row"><h3 class="grow">Verteilung der Einheiten</h3><span class="tiny">letzte ${weeks} Wochen</span></div>
+    <div class="stack">${rows.map(([k, x]) => `<i style="background:${typeColor(k)};width:${x.n / tot * 100}%" title="${esc(typeName(k))}"></i>`).join('')}</div>
+    ${rows.map(([k, x]) => `<div class="row small dist-r"><span class="dot" style="background:${typeColor(k)}"></span><span class="grow">${esc(typeName(k).replace(/^\S+\s/, ''))}</span><b>${x.n} × </b><span class="muted">${Math.round(x.n / tot * 100)} % · ${x.min} min</span></div>`).join('')}
+    <p class="tiny">Verglichen werden Einheiten, nicht Minuten – ein langer Spieltag verdrängt so nicht das kurze Athletiktraining.</p></div>`;
+}
+
 function viewLog() {
   setTitle('Trainingstagebuch', false);
   const w = weekLoads(8); const max = Math.max(1, ...w.map(x => x.load)); const warn = loadWarning();
@@ -13867,32 +14034,51 @@ function viewLog() {
       <p class="tiny">Zählt alle Einheiten – auch Verein, Wettkampf und Schulsport.</p></div>
     ${warn ? `<div class="card warn small">⚠️ ${esc(warn)}</div>` : ''}
     ${energyWarning() ? `<div class="card warn small">🔋 ${esc(energyWarning())}</div>` : ''}
+    ${eventHints().map(h => `<div class="card ${h.cls || ''} small" ${h.go ? `data-go="${h.go}" style="cursor:pointer"` : ''}>${h.html}</div>`).join('')}
     <button class="btn btn-dark btn-block" id="addLog">＋ Training eintragen (Verein, Spiel …)</button>
-    <div class="btns"><button class="btn" id="addBef">🌙 Befinden (Pausetag)</button><a class="btn" href="#beschwerden">🩹 Beschwerden${activeComplaints().length ? ' (' + activeComplaints().length + ')' : ''}</a></div>
-    <h2>Alle Einträge</h2>
-    ${S.log.length ? S.log.map(logItem).join('') : '<div class="empty"><div class="big">📓</div><p>Noch keine Einträge. Nach jedem Training landet hier dein Protokoll.</p></div>'}
+    <div class="btns"><button class="btn" id="addBef">🌙 Befinden</button><a class="btn" href="#beschwerden">🩹 Beschwerden${activeComplaints().length ? ' (' + activeComplaints().length + ')' : ''}</a><a class="btn" href="#wettkaempfe">🏆 Wettkämpfe</a></div>
+    ${distributionHtml()}
+    <div class="chips" style="margin-top:12px"><button class="chip ${logView === 'list' ? 'on' : ''}" data-lv="list">Liste</button><button class="chip ${logView === 'cal' ? 'on' : ''}" data-lv="cal">Kalender</button><a class="chip" href="#arten" style="text-decoration:none">Trainingsarten …</a></div>
+    ${logView === 'cal' ? calendarHtml(calMonth || today().slice(0, 7)) : `<h2>Alle Einträge</h2>
+    ${S.log.length ? S.log.map(logItem).join('') : '<div class="empty"><div class="big">📓</div><p>Noch keine Einträge. Nach jedem Training landet hier dein Protokoll.</p></div>'}`}
   `);
   $('#addLog', v).onclick = () => manualLog();
   $('#addBef', v).onclick = () => befindenLog();
+  $$('[data-go]', v).forEach(el => el.onclick = () => go(el.dataset.go));
+  $$('[data-lv]', v).forEach(b => b.onclick = () => { logView = b.dataset.lv; const y = window.scrollY; route(); window.scrollTo(0, y); });
+  const shiftMonth = k => { const [y, m] = (calMonth || today().slice(0, 7)).split('-').map(Number); const d = new Date(Date.UTC(y, m - 1 + k, 1)); calMonth = d.toISOString().slice(0, 7); const yy = window.scrollY; route(); window.scrollTo(0, yy); };
+  if ($('#calPrev', v)) { $('#calPrev', v).onclick = () => shiftMonth(-1); $('#calNext', v).onclick = () => shiftMonth(1); }
+  $$('[data-day]', v).forEach(b => b.onclick = () => dayModal(b.dataset.day));
   $$('[data-log]', v).forEach(el => el.onclick = () => showLog(el.dataset.log));
 }
-function manualLog() {
-  let rpe = 0;
+function manualLog(pre = {}) {
+  let rpe = pre.rpe || 0; const sf = sportField();
   openModal(`<h3>Training eintragen</h3>
-    <label class="f" for="mt">Art</label><select id="mt">${Object.entries(TYPES).filter(([k]) => k !== 'app').map(([k, t]) => `<option value="${k}">${t}</option>`).join('')}</select>
-    <div class="grid2"><div><label class="f" for="mdt">Datum</label><input id="mdt" type="date" value="${today()}" max="${today()}"></div>
-    <div><label class="f" for="mdu">Dauer (min)</label><input id="mdu" type="number" min="1" max="300" inputmode="numeric" value="90"></div></div>
-    <label class="f">Anstrengung (RPE)</label><div class="rpe" id="rpe">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<button data-v="${n}">${n}</button>`).join('')}</div>
+    <label class="f" for="mt">Art</label><select id="mt">${typeOptions(pre.type || 'verein')}</select>
+    <div class="row" id="mtNewRow" hidden style="margin-top:6px"><input id="mtNew" maxlength="30" placeholder="Name der neuen Art, z. B. Wassertraining"><button class="btn btn-sm btn-dark" id="mtNewOk">OK</button></div>
+    <div class="grid2"><div><label class="f" for="mdt">Datum</label><input id="mdt" type="date" value="${pre.date || today()}" max="${today()}"></div>
+    <div><label class="f" for="mdu">Dauer der Einheit (min)</label><input id="mdu" type="number" min="1" max="600" inputmode="numeric" value="${pre.dur || 90}"></div></div>
+    ${sf ? `<label class="f" for="msf">${sf.label} <span class="tiny">(optional)</span></label><input id="msf" type="number" min="0" max="${sf.max}" step="${sf.step}" inputmode="decimal" value="${pre[sf.key] || ''}" placeholder="${sf.unit}">` : ''}
+    <p class="tiny">Turniertag mit mehreren Spielen? Als <b>eine</b> Einheit mit Gesamtdauer eintragen.</p>
+    <label class="f">Anstrengung (RPE)</label><div class="rpe" id="rpe">${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => `<button data-v="${n}" class="${rpe === n ? 'on' : ''}">${n}</button>`).join('')}</div>
     <p class="small" id="rpeL" style="text-align:center;min-height:1.4em"></p>
     <details class="card small wb"><summary><b>Befinden</b> <span class="tiny">(freiwillig)</span></summary>${wellnessHtml('training')}</details>
-    <label class="f" for="mn">Notiz</label><input id="mn" maxlength="200">
+    <label class="f" for="mn">Notiz</label><input id="mn" maxlength="200" value="${esc(pre.note || '')}">
     <div class="btns"><button class="btn" id="mx">Abbrechen</button><button class="btn btn-primary" id="ms">Speichern</button></div>`, sh => {
+    if (rpe) $('#rpeL', sh).textContent = RPE_LABELS[rpe];
+    let lastType = $('#mt', sh).value;
+    $('#mt', sh).onchange = e => { if (e.target.value === '__new') { $('#mtNewRow', sh).hidden = false; $('#mtNew', sh).focus(); } else { lastType = e.target.value; $('#mtNewRow', sh).hidden = true; } };
+    $('#mtNewOk', sh).onclick = () => { const n = $('#mtNew', sh).value.trim(); if (!n) return toast('Bitte einen Namen eingeben.'); const t = addType(n); $('#mt', sh).innerHTML = typeOptions(t.id); lastType = t.id; $('#mtNewRow', sh).hidden = true; toast('Neue Art „' + n + '“ angelegt'); };
     $$('#rpe button', sh).forEach(b => b.onclick = () => { rpe = +b.dataset.v; $$('#rpe button', sh).forEach(x => x.classList.toggle('on', x === b)); $('#rpeL', sh).textContent = RPE_LABELS[rpe]; });
     const readW = bindWellness(sh);
     $('#mx', sh).onclick = closeModal;
     $('#ms', sh).onclick = () => {
       if (!rpe) return toast('Bitte wähle einen RPE-Wert.');
-      S.log.push({ id: uid(), ts: Date.now(), date: $('#mdt', sh).value || today(), type: $('#mt', sh).value, dur: Math.max(1, parseInt($('#mdu', sh).value) || 60), rpe, ...readW(), note: $('#mn', sh).value.trim() });
+      const ty = $('#mt', sh).value === '__new' ? lastType : $('#mt', sh).value; if (ty === '__new') return toast('Bitte eine Art wählen.');
+      const entry = { id: uid(), ts: Date.now(), date: $('#mdt', sh).value || today(), type: ty, dur: Math.max(1, parseInt($('#mdu', sh).value) || 60), rpe, ...readW(), note: $('#mn', sh).value.trim() };
+      if (sf && $('#msf', sh).value !== '') { const n = num($('#msf', sh).value); if (n != null && n > 0) entry[sf.key] = sf.key === 'km' ? Math.round(n * 10) / 10 : Math.round(n); }
+      if (pre.eventId) entry.eventId = pre.eventId;
+      S.log.push(entry);
       S.log.sort(byTimeDesc); save(); closeModal(); toast('Eingetragen'); route();
     };
   });
@@ -13901,16 +14087,20 @@ function showLog(id) {
   const l = S.log.find(x => x.id === id); if (!l) return;
   const cps = Object.entries(l.cp || {}).map(([id, v]) => `${esc((complaintById(id) || { name: 'gelöschte Beschwerde' }).name)}: <b>${v}/10</b>`);
   const wb = [l.sl ? 'Schlaf: ' + l.sl + '/4 (' + SLEEP_L[l.sl] + ')' : '', l.ei ? 'Energie im Training: ' + l.ei + '/4 (' + EN_IN_L[l.ei] + ')' : '', l.eo ? 'Energie danach: ' + l.eo + '/4 (' + EN_OUT_L[l.eo] + ')' : '', l.ed ? 'Energie: ' + l.ed + '/4 (' + EN_DAY_L[l.ed] + ')' : '', l.mk === true ? 'Muskelkater: ja' : l.mk === false ? 'Muskelkater: nein' : ''].filter(Boolean);
-  openModal(`<h3>${esc(l.type === 'app' ? l.title : TYPES[l.type])}</h3>
+  const xl = extraLine(l);
+  openModal(`<h3>${esc(entryTitle(l))}</h3>
     <p class="small muted">${fmtDate(l.date)}${l.type === 'befinden' ? '' : ` · ${l.dur} min · RPE ${l.rpe} (${esc(RPE_LABELS[l.rpe])}) · Belastung ${l.dur * l.rpe}`}</p>
     ${l.plan ? `<p class="small">Plan: ${esc(l.plan)}</p>` : ''}
+    ${xl ? `<p class="small">${xl}</p>` : ''}
     ${wb.length ? `<p class="small">${wb.map(esc).join('<br>')}</p>` : ''}
     ${cps.length ? `<p class="small">Beschwerden: ${cps.join(' · ')}</p>` : ''}
     ${(l.pain === true || l.pain > 5) ? '<div class="card warn small">Deutliche Schmerzen angegeben – bitte mit Lehrkraft/Trainer besprechen.</div>' : ''}
     ${l.note ? `<p>${esc(l.note)}</p>` : ''}
     ${(l.items || []).map(i => { const s = i.sets.filter(x => x.done); return `<div class="ex-row"><div class="grow"><b>${esc(ex(i.ex).n)}</b><div class="small muted">${s.length ? s.map(x => esc(x.r || '–') + (x.kg ? ' × ' + esc(x.kg) + ' kg' : '')).join(' | ') : 'nicht absolviert'}</div></div></div>`; }).join('')}
+    ${l.type !== 'app' && l.type !== 'befinden' ? '<button class="btn btn-block" id="lr" style="margin-top:10px">↻ Wiederholen (heute gleich eintragen)</button>' : ''}
     <div class="btns"><button class="btn btn-danger" id="ld">Löschen</button><button class="btn btn-dark" id="lc">Schließen</button></div>`, sh => {
     $('#lc', sh).onclick = closeModal;
+    if ($('#lr', sh)) $('#lr', sh).onclick = () => manualLog({ type: customType(l.type) || TYPES[l.type] ? l.type : 'sonst', dur: l.dur, rpe: l.rpe, km: l.km, spielmin: l.spielmin, matches: l.matches });
     $('#ld', sh).onclick = async () => { closeModal(); if (await confirmBox('Eintrag löschen?', 'Löschen', true)) { S.log = S.log.filter(x => x.id !== id); save(); route(); } };
   });
 }
@@ -14200,6 +14390,8 @@ function viewMore() {
   const v = V(`
     <a class="item" href="#profile"><div class="grow"><div class="t">Profil</div><div class="s">${esc(p.name || 'ohne Namen')} · ${SPORTS[p.sport] ? SPORTS[p.sport].name : ''} · ${esc((LEVELS[p.level] || '').split(' (')[0])}</div></div>${CHEV}</a>
     <a class="item" href="#tests"><div class="grow"><div class="t">⏱ Athletik-Check</div><div class="s">Eingangstest &amp; Retest mit Verlauf</div></div>${CHEV}</a>
+    <a class="item" href="#wettkaempfe"><div class="grow"><div class="t">🏆 Wettkämpfe</div><div class="s">Planen, Ergebnisse eintragen</div></div>${CHEV}</a>
+    <a class="item" href="#arten"><div class="grow"><div class="t">🎨 Trainingsarten</div><div class="s">Eigene Arten für das Tagebuch</div></div>${CHEV}</a>
     <a class="item" href="#templates"><div class="grow"><div class="t">📋 Planvorlagen</div><div class="s">Schwimmen, Fußball, Handball, Tennis</div></div>${CHEV}</a>
     <a class="item" href="#safety"><div class="grow"><div class="t">❤️ Sicherheit &amp; Gesundheit</div><div class="s">Die wichtigsten Regeln</div></div>${CHEV}</a>
     <h2>Für Lehrkräfte &amp; Trainer</h2>
@@ -14213,7 +14405,7 @@ function viewMore() {
     <input type="file" id="impF" accept="application/json,.json" hidden>
     <button class="btn btn-danger btn-block" id="wipe">Alle Daten löschen</button>
     <p class="tiny" style="margin-top:16px">Alle Daten liegen ausschließlich auf diesem Gerät (Browser-Speicher). Beim Löschen der Browserdaten gehen sie verloren – mache gelegentlich eine Datensicherung.<br>
-    AVG Leistungsteam · Version 1.1 · Enthält jsQR (Apache-2.0), qrcode-generator (MIT), lz-string (MIT).</p>
+    AVG Leistungsteam · Version 1.2 · Enthält jsQR (Apache-2.0), qrcode-generator (MIT), lz-string (MIT).</p>
   `);
   if ($('#inst', v)) $('#inst', v).onclick = showInstall;
   $('#appQr', v).onclick = () => {
